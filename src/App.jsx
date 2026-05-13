@@ -816,4 +816,41 @@ export default function App(){
       {/* Nav */}
       <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center"}}>
         {[{k:"board",l:"▦  Schedule Board"},{k:"myjobs",l:"☰  My Jobs"},{k:"pool",l:`📋  Job Pool (${poolJobs.length})`}].map(({k,l})=>(
-          <button key={k} onClick={()=>setView(k)} style={{background:"transparent",border:"none",borderBottom:`3px solid ${view===k?"#1a73e8":"transparent"}`,color:view===k?"#1a73e8":"#5f6368",padding:"14px 18px",fontSize:13,fontWeight:view===k?700:500,cursor:
+          <button key={k} onClick={()=>setView(k)} style={{background:"transparent",border:"none",borderBottom:`3px solid ${view===k?"#1a73e8":"transparent"}`,color:view===k?"#1a73e8":"#5f6368",padding:"14px 18px",fontSize:13,fontWeight:view===k?700:500,cursor:"pointer",fontFamily:F,transition:"all 0.15s",marginBottom:-1}}>{l}</button>
+        ))}
+        {view==="myjobs"&&<div style={{marginLeft:"auto",display:"flex",gap:6,padding:"8px 0"}}>
+          {TEAM.map(p=>{const c=PC[p];return<button key={p} onClick={()=>setMyP(p)} style={{background:myP===p?c.dot:"#f1f3f4",color:myP===p?"#fff":c.text,border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:F}}>{p}</button>;})}
+        </div>}
+      </div>
+      {/* Day navigation */}
+      {view==="board"&&<div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"10px 24px",display:"flex",alignItems:"center",gap:12}}>
+        <button onClick={prevDay} style={{background:"#f1f3f4",border:"none",color:"#5f6368",width:32,height:32,borderRadius:"50%",fontSize:16,cursor:"pointer",fontFamily:F,display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+        <input type="date" value={viewDate.toISOString().split("T")[0]} onChange={e=>goToDate(e.target.value)}
+          style={{border:"1px solid #e0e0e0",borderRadius:6,padding:"6px 10px",fontSize:13,color:"#3c4043",fontFamily:F,outline:"none",background:"#f8f9fa",cursor:"pointer"}}/>
+        <button onClick={nextDay} style={{background:"#f1f3f4",border:"none",color:"#5f6368",width:32,height:32,borderRadius:"50%",fontSize:16,cursor:"pointer",fontFamily:F,display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
+        {!isToday&&<button onClick={goToday} style={{background:"#e8f0fe",border:"none",color:"#1a73e8",padding:"6px 16px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:F}}>Today</button>}
+        {loading&&<span style={{fontSize:12,color:"#1a73e8"}}>Loading...</span>}
+        {lastSync&&!loading&&<span style={{fontSize:11,color:"#9aa0a6"}}>Synced {lastSync}</span>}
+        <button onClick={()=>fetchCalendarJobs(viewDate)} style={{marginLeft:"auto",background:"none",border:"1px solid #e0e0e0",color:"#5f6368",padding:"5px 14px",borderRadius:20,fontSize:11,cursor:"pointer",fontFamily:F}}>↻ Refresh</button>
+      </div>}
+
+      {/* Content */}
+      <div style={{padding:"20px 24px",maxWidth:1400,margin:"0 auto"}}>
+        {loading&&schedJobs.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:"#9aa0a6"}}>
+          <div style={{fontSize:32,marginBottom:12}}>📅</div>
+          <div style={{fontSize:14,fontWeight:500}}>Loading your Calendar jobs...</div>
+        </div>}
+        {!loading&&schedJobs.length===0&&view==="board"&&<div style={{textAlign:"center",padding:"60px 0",color:"#9aa0a6"}}>
+          <div style={{fontSize:32,marginBottom:12}}>📅</div>
+          <div style={{fontSize:14,fontWeight:500,marginBottom:8}}>No jobs scheduled for today</div>
+          <div style={{fontSize:12}}>Jobs from your Google Calendar will appear here</div>
+        </div>}
+        {(schedJobs.length>0||view!=="board")&&<>
+          {view==="board"&&<Board jobs={schedJobs} onSelect={setSel}/>}
+          {view==="myjobs"&&<MyJobs jobs={schedJobs} plumber={myP} onSelect={setSel}/>}
+          {view==="pool"&&<JobPool poolJobs={poolJobs} onSchedule={setSchedModal}/>}
+        </>}
+      </div>
+    </div>
+  );
+}
