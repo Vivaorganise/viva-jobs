@@ -1,19 +1,42 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
+
+// ── Config ────────────────────────────────────────────────────────────────
+const CLIENT_ID = "485477368548-miajb1flq89rchpvjjnijp2nov3nit6p.apps.googleusercontent.com";
+const SCOPES = "https://www.googleapis.com/auth/calendar";
+const DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
 
 const TEAM = ["Richie","Mingo","Harry","Chris","Nick"];
 const DAY_START = 7;
 const DAY_END = 18;
 const DAY_MINS = (DAY_END - DAY_START) * 60;
 
-const PC = {
-  Richie: {light:"#e8f0ff",border:"#4a7acc",dot:"#2a5aaa",text:"#1a3a7a"},
-  Mingo:  {light:"#fff0ea",border:"#e07040",dot:"#c05020",text:"#8a2a00"},
-  Harry:  {light:"#eafff0",border:"#40b060",dot:"#208040",text:"#0a5020"},
-  Chris:  {light:"#fffde8",border:"#c8a820",dot:"#a07800",text:"#604800"},
-  Nick:   {light:"#f5eaff",border:"#9060c0",dot:"#6030a0",text:"#3a0a70"},
+// Team email map
+const EMAIL_TO_NAME = {
+  "info@vivaplumbing.com": "Richie",
+  "vivaorganise@gmail.com": "Richie",
+  "deanvivaplumbing@gmail.com": "Mingo",
+  "vivaplumbing05@gmail.com": "Harry",
+  "chrisvivaplumbing@gmail.com": "Chris",
+  "nicholaspaget14@gmail.com": "Nick",
 };
 
-// Job type colours matching Google Calendar style
+const NAME_TO_EMAIL = {
+  "Richie": "info@vivaplumbing.com",
+  "Mingo": "deanvivaplumbing@gmail.com",
+  "Harry": "vivaplumbing05@gmail.com",
+  "Chris": "chrisvivaplumbing@gmail.com",
+  "Nick": "nicholaspaget14@gmail.com",
+};
+
+const PC = {
+  Richie:{light:"#e8f0ff",border:"#4a7acc",dot:"#2a5aaa",text:"#1a3a7a"},
+  Mingo: {light:"#fff0ea",border:"#e07040",dot:"#c05020",text:"#8a2a00"},
+  Harry: {light:"#eafff0",border:"#40b060",dot:"#208040",text:"#0a5020"},
+  Chris: {light:"#fffde8",border:"#c8a820",dot:"#a07800",text:"#604800"},
+  Nick:  {light:"#f5eaff",border:"#9060c0",dot:"#6030a0",text:"#3a0a70"},
+  Unknown:{light:"#f5f5f5",border:"#999",dot:"#666",text:"#333"},
+};
+
 const JT_COLORS = {
   "Toilet":                  {bg:"#d2e3fc",border:"#4a7acc",text:"#1a3a7a"},
   "Tap Service":             {bg:"#d2e3fc",border:"#4a7acc",text:"#1a3a7a"},
@@ -28,16 +51,14 @@ const JT_COLORS = {
 };
 
 const STATUS_COLORS = {
-  pending:            {bg:"#f5f5f5",border:"#d0d0d0",text:"#666",    label:"Pending"},
-  travelling:         {bg:"#fff8e1",border:"#f9a825",text:"#e65100", label:"Travelling"},
-  arrived:            {bg:"#e8f5e9",border:"#66bb6a",text:"#1b5e20", label:"Arrived"},
-  "in-progress":      {bg:"#fff3e0",border:"#ffa726",text:"#bf360c", label:"In Progress"},
-  "late-alert":       {bg:"#ffebee",border:"#ef5350",text:"#b71c1c", label:"Action Required"},
-  "ready-to-invoice": {bg:"#e3f2fd",border:"#42a5f5",text:"#0d47a1", label:"Ready to Invoice"},
-  complete:           {bg:"#e8f5e9",border:"#66bb6a",text:"#1b5e20", label:"Complete"},
+  pending:            {bg:"#f5f5f5",border:"#d0d0d0",text:"#666",   label:"Pending"},
+  travelling:         {bg:"#fff8e1",border:"#f9a825",text:"#e65100",label:"Travelling"},
+  arrived:            {bg:"#e8f5e9",border:"#66bb6a",text:"#1b5e20",label:"Arrived"},
+  "in-progress":      {bg:"#fff3e0",border:"#ffa726",text:"#bf360c",label:"In Progress"},
+  "late-alert":       {bg:"#ffebee",border:"#ef5350",text:"#b71c1c",label:"Action Required"},
+  "ready-to-invoice": {bg:"#e3f2fd",border:"#42a5f5",text:"#0d47a1",label:"Ready to Invoice"},
+  complete:           {bg:"#e8f5e9",border:"#66bb6a",text:"#1b5e20",label:"Complete"},
 };
-
-const AREAS = ["Inner North","Inner South","Inner West","South West","North","East","Other"];
 
 const MATS = {
   "Toilet":[
@@ -66,48 +87,217 @@ const getM=jt=>MATS[jt]||GM;
 const initM=jt=>{const s={};getM(jt).forEach(m=>{s[m.id]=m.type==="hose"?{used:false,length:"450"}:{used:false,qty:0};});return s;};
 const mToTxt=(jt,ms)=>{const ql=["0","1/4","1/2","3/4","1"];return getM(jt).filter(m=>ms[m.id]?.used).map(m=>{const s=ms[m.id];return m.type==="qty"?`${m.name} x${s.qty}`:m.type==="quarter"?`${m.name} x${ql[s.qty]}`:`${m.name} ${s.length}mm`;}).join("\n");};
 
-// Scheduled jobs (today)
-const SCHED_JOBS=[
-  {id:"ev001",address:"704/1 Kingsmill St, Chermside",timeStart:"08:30",timeEnd:"10:30",assignee:"Mingo",ivNumber:"IV-43216",jobType:"Toilet",notes:"Toilet leaking when flushed.",status:"pending",departedAt:null,arrivedAt:null,commencedAt:null,completedAt:null,tenantNumber:null,tenantName:"James Hargreaves",tenantPhone:"0412 345 678",agentName:"Samantha Price",agentPhone:"07 3123 4567",area:"North",workOrder:{agency:"Ray White Chermside",keyNumber:"841",spendLimit:"$250",instructions:"Toilet in main bathroom leaking at base. Investigate and repair. Check all fixtures. Do not exceed spend limit.",hasPhotos:false,url:null},story:"",actionLog:[],furtherAction:"",newArrivalTime:""},
-  {id:"ev002",address:"19 Yates Ave, Ashgrove",timeStart:"11:30",timeEnd:"13:30",assignee:"Chris",ivNumber:"IV-43194",jobType:"Flexi Hose / Health Check",notes:"Bathroom flexi hose replacement and health check.",status:"pending",departedAt:null,arrivedAt:null,commencedAt:null,completedAt:null,tenantNumber:2,tenantName:"Lauren Potter",tenantPhone:"0413 268 174",agentName:"Kristy Van Den Elst",agentPhone:"07 3871 1420",area:"Inner West",workOrder:{agency:"Plum Property",keyNumber:"642",spendLimit:null,instructions:"Flexi hose under bathroom sink requires replacing. Health check all taps, fittings and pipes.",hasPhotos:true,url:"https://drive.google.com"},story:"",actionLog:[],furtherAction:"",newArrivalTime:""},
-  {id:"ev003",address:"12 Latrobe Tce, Paddington",timeStart:"09:00",timeEnd:"11:00",assignee:"Richie",ivNumber:"IV-43201",jobType:"Hot Water",notes:"No hot water. Rheem 250L electric. 12 years old.",status:"travelling",departedAt:"08:48",arrivedAt:null,commencedAt:null,completedAt:null,tenantNumber:1,tenantName:"Sarah Mitchell",tenantPhone:"0421 987 654",agentName:"Tom Reeves",agentPhone:"07 3300 1122",area:"Inner West",workOrder:{agency:"LJ Hooker Paddington",keyNumber:null,spendLimit:"$500",instructions:"No hot water. Electric storage approx 12 years old. Investigate. Quote separately if replacement required.",hasPhotos:false,url:"https://drive.google.com"},story:"",actionLog:[{time:"08:48",actor:"Richie",action:"Departed for job"}],furtherAction:"",newArrivalTime:""},
-  {id:"ev004",address:"8 Swann Rd, Taringa",timeStart:"07:30",timeEnd:"09:00",assignee:"Nick",ivNumber:"IV-43188",jobType:"Blocked Drain",notes:"Kitchen sink blocked.",status:"ready-to-invoice",departedAt:"07:22",arrivedAt:"07:38",commencedAt:"07:41",completedAt:"08:52",tenantNumber:null,tenantName:"Tom Bassett",tenantPhone:"0408 111 222",agentName:"Brooke Lawson",agentPhone:"07 3870 5500",area:"Inner West",workOrder:{agency:"Place Estate Agents",keyNumber:null,spendLimit:"$300",instructions:"Kitchen sink blocked. Clear and investigate cause.",hasPhotos:false,url:"https://drive.google.com"},story:"Called out to investigate a blocked kitchen sink drain. The inspection opening was rodded with the 100mm retriever head, engaging the obstruction at approximately 13.65 metres. Consecutive passes were made with the 100mm cutting head to restore the full diameter of the drain. Grease and food debris were retrieved. The drain was flushed and tested confirming a clear result.",actionLog:[{time:"07:22",actor:"Nick",action:"Departed"},{time:"07:38",actor:"Nick",action:"Arrived — 16 min travel"},{time:"07:41",actor:"Nick",action:"Commenced"},{time:"08:52",actor:"Nick",action:"Completed — Further action: None"}],furtherAction:"None",newArrivalTime:""},
-  {id:"ev005",address:"3 Musgrave Rd, Red Hill",timeStart:"10:00",timeEnd:"12:00",assignee:"Harry",ivNumber:"IV-43220",jobType:"Tap Service",notes:"Dripping kitchen tap.",status:"in-progress",departedAt:"09:45",arrivedAt:"10:05",commencedAt:"10:12",completedAt:null,tenantNumber:null,tenantName:"Ben Frazer",tenantPhone:"0402 567 891",agentName:"Lisa Chan",agentPhone:"07 3366 1200",area:"Inner North",workOrder:{agency:"McGrath Estate Agents",keyNumber:"312",spendLimit:"$200",instructions:"Kitchen tap dripping. Service and replace washers.",hasPhotos:false,url:null},story:"",actionLog:[{time:"09:45",actor:"Harry",action:"Departed"},{time:"10:05",actor:"Harry",action:"Arrived"},{time:"10:12",actor:"Harry",action:"Commenced"}],furtherAction:"",newArrivalTime:""},
-  {id:"ev006",address:"55 Boundary St, West End",timeStart:"13:00",timeEnd:"15:00",assignee:"Mingo",ivNumber:"IV-43225",jobType:"Blocked Drain",notes:"",status:"pending",departedAt:null,arrivedAt:null,commencedAt:null,completedAt:null,tenantNumber:1,tenantName:"Kate Morrison",tenantPhone:"0411 234 567",agentName:"Jess Wang",agentPhone:"07 3844 5500",area:"Inner South",workOrder:{agency:"Harcourts",keyNumber:null,spendLimit:"$300",instructions:"Bathroom drain blocked. Clear and report cause.",hasPhotos:false,url:null},story:"",actionLog:[],furtherAction:"",newArrivalTime:""},
-];
-
-// Unscheduled job pool
-const POOL_JOBS=[
-  {id:"p001",address:"2/17 Alexandra Ave, Taringa",jobType:"Quoted Work",area:"Inner West",agentName:"Place Estate Agents",agentPhone:"07 3870 5500",ivNumber:"IV-43150",notes:"Quoted work approved. Replace bathroom tapware.",tenantName:"R. Hutchins",tenantPhone:"0401 111 222",priority:"normal"},
-  {id:"p002",address:"20 Lucinda St, Taringa",jobType:"Do and Charge",area:"Inner West",agentName:"Place Estate Agents",agentPhone:"07 3870 5500",ivNumber:"IV-43155",notes:"Leaking kitchen sink tap. Do and charge.",tenantName:"S. Park",tenantPhone:"0402 333 444",priority:"normal"},
-  {id:"p003",address:"3/23 Waverley Rd, Taringa",jobType:"Quote Only",area:"Inner West",agentName:"LJ Hooker",agentPhone:"07 3300 1122",ivNumber:"IV-43158",notes:"Quote only — hot water unit failing.",tenantName:"M. Brennan",tenantPhone:"0403 555 666",priority:"normal"},
-  {id:"p004",address:"46 Goldsbrough Rd, Taringa",jobType:"Quoted Work",area:"Inner West",agentName:"Ray White",agentPhone:"07 3123 4567",ivNumber:"IV-43162",notes:"Approved quote — replace toilet suite.",tenantName:"J. Collins",tenantPhone:"0404 777 888",priority:"normal"},
-  {id:"p005",address:"101 Lambert Rd, Indooroopilly",jobType:"Do and Charge",area:"Inner West",agentName:"McGrath",agentPhone:"07 3366 1200",ivNumber:"IV-43170",notes:"Blocked drain — kitchen.",tenantName:"A. White",tenantPhone:"0405 999 000",priority:"normal"},
-  {id:"p006",address:"144 Jesmond Rd, Indooroopilly",jobType:"Quoted Work",area:"Inner West",agentName:"Plum Property",agentPhone:"07 3871 1420",ivNumber:"IV-43172",notes:"Approved — replace flexi hoses throughout.",tenantName:"C. Brown",tenantPhone:"0406 111 333",priority:"normal"},
-  {id:"p007",address:"23 Walker Pl, Pullenvale",jobType:"Quoted Work",area:"South West",agentName:"Harcourts",agentPhone:"07 3844 5500",ivNumber:"IV-43180",notes:"Approved quote — bathroom renovation plumbing.",tenantName:"D. Smith",tenantPhone:"0407 222 444",priority:"normal"},
-  {id:"p008",address:"43 Tangmere St, Chapel Hill",jobType:"Quote Only",area:"South West",agentName:"Ray White",agentPhone:"07 3123 4567",ivNumber:"IV-43182",notes:"Quote only — leaking shower.",tenantName:"F. Jones",tenantPhone:"0408 333 555",priority:"normal"},
-  {id:"p009",address:"4/67 Sisley St, St Lucia",jobType:"Do and Charge",area:"Inner West",agentName:"Place Estate Agents",agentPhone:"07 3870 5500",ivNumber:"IV-43190",notes:"No hot water. Unit old.",tenantName:"G. Taylor",tenantPhone:"0409 444 666",priority:"urgent"},
-  {id:"p010",address:"6/93 Macquarie St, St Lucia",jobType:"Quote Only",area:"Inner West",agentName:"McGrath",agentPhone:"07 3366 1200",ivNumber:"IV-43192",notes:"Quote only — bathroom renovation.",tenantName:"H. Martin",tenantPhone:"0410 555 777",priority:"normal"},
-  {id:"p011",address:"1/56 Ryans Rd, St Lucia",jobType:"Quoted Work",area:"Inner West",agentName:"LJ Hooker",agentPhone:"07 3300 1122",ivNumber:"IV-43195",notes:"Approved — replace kitchen tapware.",tenantName:"I. Wilson",tenantPhone:"0411 666 888",priority:"normal"},
-  {id:"p012",address:"42/7 Landsborough Tce, Toowong",jobType:"Do and Charge",area:"Inner West",agentName:"Ray White",agentPhone:"07 3123 4567",ivNumber:"IV-43200",notes:"Duplicate job — check with agent before attending.",tenantName:"J. Anderson",tenantPhone:"0412 777 999",priority:"normal"},
-  {id:"p013",address:"15 Earle Lane, Toowong",jobType:"Do and Charge",area:"Inner West",agentName:"Place Estate Agents",agentPhone:"07 3870 5500",ivNumber:"IV-43205",notes:"Blocked toilet.",tenantName:"K. Thomas",tenantPhone:"0413 888 000",priority:"urgent"},
-  {id:"p014",address:"3/15 Avocet St, Kenmore",jobType:"Quoted Work",area:"South West",agentName:"Harcourts",agentPhone:"07 3844 5500",ivNumber:"IV-43210",notes:"Approved — tap replacement throughout.",tenantName:"L. Jackson",tenantPhone:"0414 999 111",priority:"normal"},
-  {id:"p015",address:"26 Lomandra Pl, Chapel Hill",jobType:"Do and Charge",area:"South West",agentName:"McGrath",agentPhone:"07 3366 1200",ivNumber:"IV-43215",notes:"Duplicate — confirm before attending.",tenantName:"M. Harris",tenantPhone:"0415 000 222",priority:"normal"},
-];
-
 const IP=`You are a plumbing documentation assistant for Viva Plumbing, Brisbane. Convert rough plumber notes into a clean invoice description then review it. Rules: Open with "Called out to investigate...". Structure: findings > works > outcome > recommendations. Past tense for completed work. No first-person, no dot points, no pipe sizes. "Braided supply hose"->"premium PEX core braided supply hoses". "corroded" not "rusty". "Rodded" not "sent" for eel. Cables=4.55m each. Fixture location required for shower/toilet/basin/vanity/bath - flag if missing. Compare draft to agency instructions and flag gaps. Output only valid JSON: {"draft":"text","flags":["flag1"]}`;
 
+// ── Helpers ───────────────────────────────────────────────────────────────
 function tn(){const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");}
-function pt(t){const[h,m]=t.split(":").map(Number);return h*60+m;}
+function pt(t){if(!t)return 0;const[h,m]=t.split(":").map(Number);return h*60+m;}
 function td(a,b){const d=pt(b)-pt(a);if(d<=0)return null;return d>=60?Math.floor(d/60)+"h "+d%60+"m":d+" min";}
-function sno(t,b){try{if(typeof window!=="undefined"&&"Notification"in window&&window.Notification.permission==="granted")new window.Notification(t,{body:b});}catch(e){}}
-function rno(){try{if(typeof window!=="undefined"&&"Notification"in window&&window.Notification.permission==="default")window.Notification.requestPermission();}catch(e){}}
 function t2p(ts){return Math.max(0,Math.min(100,(pt(ts)-DAY_START*60)/DAY_MINS*100));}
 function dur(s,e){return Math.max(2,(pt(e)-pt(s))/DAY_MINS*100);}
 function jc(jt){return JT_COLORS[jt]||{bg:"#e8eaed",border:"#9aa0a6",text:"#3c4043"};}
+function sno(t,b){try{if(typeof window!=="undefined"&&"Notification"in window&&window.Notification.permission==="granted")new window.Notification(t,{body:b});}catch(e){}}
+function rno(){try{if(typeof window!=="undefined"&&"Notification"in window&&window.Notification.permission==="default")window.Notification.requestPermission();}catch(e){}}
 
-const F="'Segoe UI',system-ui,sans-serif";
-const mono="'DM Mono',monospace";
+// Parse assignee from Calendar event attendees
+function getAssignee(event) {
+  if (!event.attendees) return "Richie";
+  // Look for the # number in title for tenant, but assignee is determined by which plumber email is in attendees
+  // Try to find a plumber email (excluding vivaorganise which is always there)
+  for (const att of event.attendees) {
+    const name = EMAIL_TO_NAME[att.email?.toLowerCase()];
+    if (name && name !== "Richie" && att.email !== "vivaorganise@gmail.com") {
+      return name;
+    }
+  }
+  // Check if Richie's personal email is there
+  if (event.attendees.some(a => a.email === "info@vivaplumbing.com")) return "Richie";
+  return "Richie";
+}
+
+// Parse job type from event title/description
+function parseJobType(title, desc) {
+  const t = (title + " " + (desc||"")).toLowerCase();
+  if (t.includes("quote only")) return "Quote Only";
+  if (t.includes("quoted work")) return "Quoted Work";
+  if (t.includes("urgent")) return "Urgent";
+  if (t.includes("return")) return "Return Visit";
+  if (t.includes("hot water") || t.includes("hwu")) return "Hot Water";
+  if (t.includes("toilet")) return "Toilet";
+  if (t.includes("drain") || t.includes("blocked")) return "Blocked Drain";
+  if (t.includes("tap") || t.includes("washer")) return "Tap Service";
+  if (t.includes("flexi") || t.includes("health check")) return "Flexi Hose / Health Check";
+  if (t.includes("do and charge")) return "Do and Charge";
+  return "Do and Charge";
+}
+
+// Parse notes section from Calendar event description
+function parseNotes(desc) {
+  if (!desc) return "";
+  const notesMatch = desc.match(/Job Story:(.*?)(?:---|Quote:|$)/si);
+  if (notesMatch) return notesMatch[1].trim();
+  const match = desc.match(/Notes:(.*?)(?:---|$)/si);
+  if (match) return match[1].trim();
+  return "";
+}
+
+// Parse status from description
+function parseStatus(desc) {
+  if (!desc) return "pending";
+  const d = desc.toLowerCase();
+  if (d.includes("time complete:") && d.match(/time complete:\s*\d/)) return "ready-to-invoice";
+  if (d.includes("time arrive:") && d.match(/time arrive:\s*\d/)) return "in-progress";
+  if (d.includes("time depart:") && d.match(/time depart:\s*\d/)) return "travelling";
+  return "pending";
+}
+
+// Parse IV number from title or description
+function parseIV(title, desc) {
+  const match = (title + " " + (desc||"")).match(/IV-\d+/i);
+  return match ? match[0].toUpperCase() : "";
+}
+
+// Parse tenant number from title (e.g. "#2")
+function parseTenantNum(title) {
+  const match = title.match(/#(\d+)/);
+  return match ? parseInt(match[1]) : null;
+}
+
+// Parse key number from description
+function parseKeyNum(desc) {
+  if (!desc) return null;
+  const match = (desc||"").match(/key\s*#?(\d+)/i);
+  return match ? match[1] : null;
+}
+
+// Convert Calendar event to job object
+function eventToJob(event) {
+  const title = event.summary || "";
+  const desc = event.description || "";
+  const start = event.start?.dateTime || event.start?.date || "";
+  const end = event.end?.dateTime || event.end?.date || "";
+  const startTime = start ? new Date(start).toTimeString().slice(0,5) : "08:00";
+  const endTime = end ? new Date(end).toTimeString().slice(0,5) : "09:00";
+  // Extract address from title (everything before the time pattern)
+  const address = title.replace(/\s*\d{1,2}:\d{2}\s*[-–]\s*\d{1,2}:\d{2}.*$/, "").replace(/#\d+\s*$/, "").trim() || title;
+  return {
+    id: event.id,
+    calendarEventId: event.id,
+    address,
+    timeStart: startTime,
+    timeEnd: endTime,
+    assignee: getAssignee(event),
+    ivNumber: parseIV(title, desc),
+    jobType: parseJobType(title, desc),
+    notes: parseNotes(desc),
+    status: parseStatus(desc),
+    departedAt: null, arrivedAt: null, commencedAt: null, completedAt: null,
+    tenantNumber: parseTenantNum(title),
+    tenantName: "", tenantPhone: "",
+    agentName: "", agentPhone: "",
+    area: "",
+    workOrder: {
+      agency: "", keyNumber: parseKeyNum(desc), spendLimit: null,
+      instructions: desc.replace(/Notes:.*$/si,"").trim().slice(0,300),
+      hasPhotos: false, url: null,
+    },
+    story: "", actionLog: [], furtherAction: "", newArrivalTime: "",
+    rawEvent: event,
+  };
+}
+
+// Update Calendar event description with job status
+async function updateCalendarEvent(jobId, updates) {
+  try {
+    const event = await window.gapi.client.calendar.events.get({
+      calendarId: "primary", eventId: jobId,
+    });
+    const desc = event.result.description || "";
+    // Update the notes section
+    let newDesc = desc;
+    if (updates.notes) {
+      newDesc = newDesc.replace(/Job Story:.*?(?=---|$)/si, `Job Story: ${updates.notes}\n`);
+      if (!newDesc.includes("Job Story:")) newDesc += `\nJob Story: ${updates.notes}`;
+    }
+    if (updates.story) {
+      newDesc = newDesc + `\n\n--- INVOICE DRAFT ---\n${updates.story}`;
+    }
+    await window.gapi.client.calendar.events.patch({
+      calendarId: "primary", eventId: jobId,
+      resource: { description: newDesc },
+    });
+  } catch(e) { console.error("Calendar update failed:", e); }
+}
+
+const F = "'Segoe UI',system-ui,sans-serif";
+const mono = "'DM Mono',monospace";
+
+// ── Google Sign In ────────────────────────────────────────────────────────
+function SignIn({ onSignedIn }) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const script1 = document.createElement("script");
+    script1.src = "https://apis.google.com/js/api.js";
+    script1.onload = () => {
+      window.gapi.load("client", async () => {
+        try {
+          await window.gapi.client.init({
+            discoveryDocs: [DISCOVERY_DOC],
+          });
+        } catch(e) { console.error(e); }
+      });
+    };
+    document.head.appendChild(script1);
+    const script2 = document.createElement("script");
+    script2.src = "https://accounts.google.com/gsi/client";
+    document.head.appendChild(script2);
+  }, []);
+
+  const handleSignIn = () => {
+    setLoading(true); setError("");
+    try {
+      const client = window.google.accounts.oauth2.initTokenClient({
+        client_id: CLIENT_ID,
+        scope: SCOPES,
+        callback: async (resp) => {
+          if (resp.error) { setError("Sign in failed. Try again."); setLoading(false); return; }
+          window.gapi.client.setToken(resp);
+          // Get user info
+          try {
+            const userInfo = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+              headers: { Authorization: `Bearer ${resp.access_token}` }
+            }).then(r => r.json());
+            const name = EMAIL_TO_NAME[userInfo.email?.toLowerCase()] || "Richie";
+            onSignedIn({ name, email: userInfo.email, token: resp.access_token });
+          } catch(e) { onSignedIn({ name: "Richie", email: "", token: resp.access_token }); }
+          setLoading(false);
+        },
+      });
+      client.requestAccessToken();
+    } catch(e) { setError("Sign in failed. Make sure popups are allowed."); setLoading(false); }
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#f8f9fa",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:F}}>
+      <div style={{background:"#fff",borderRadius:12,padding:"48px 40px",boxShadow:"0 4px 20px rgba(0,0,0,0.1)",maxWidth:400,width:"100%",textAlign:"center"}}>
+        <div style={{width:56,height:56,background:"#e05a2b",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 20px"}}>
+          <span style={{color:"#fff",fontSize:28,fontWeight:800}}>V</span>
+        </div>
+        <div style={{fontSize:22,fontWeight:700,color:"#202124",marginBottom:8}}>Viva Jobs</div>
+        <div style={{fontSize:14,color:"#5f6368",marginBottom:32}}>Sign in with your Google account to access your jobs</div>
+        {error && <div style={{background:"#ffebee",border:"1px solid #ef9a9a",borderRadius:8,padding:"10px 14px",fontSize:13,color:"#c62828",marginBottom:16}}>{error}</div>}
+        <button onClick={handleSignIn} disabled={loading}
+          style={{background:loading?"#f1f3f4":"#1a73e8",color:loading?"#9aa0a6":"#fff",border:"none",borderRadius:8,padding:"12px 32px",fontSize:15,fontWeight:600,cursor:loading?"not-allowed":"pointer",fontFamily:F,width:"100%",display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#fff" d="M16.51 8H8.98v3h4.3c-.18 1-.74 1.48-1.6 2.04v2.01h2.6a7.8 7.8 0 0 0 2.38-5.88c0-.57-.05-.66-.15-1.18z"/><path fill="#fff" d="M8.98 17c2.16 0 3.97-.72 5.3-1.94l-2.6-2a4.8 4.8 0 0 1-7.18-2.54H1.83v2.07A8 8 0 0 0 8.98 17z"/><path fill="#fff" d="M4.5 10.52a4.8 4.8 0 0 1 0-3.04V5.41H1.83a8 8 0 0 0 0 7.18l2.67-2.07z"/><path fill="#fff" d="M8.98 4.18c1.17 0 2.23.4 3.06 1.2l2.3-2.3A8 8 0 0 0 1.83 5.4L4.5 7.49a4.77 4.77 0 0 1 4.48-3.3z"/></svg>
+          {loading ? "Signing in..." : "Sign in with Google"}
+        </button>
+        <div style={{fontSize:11,color:"#9aa0a6",marginTop:16}}>Access restricted to Viva Plumbing team members</div>
+      </div>
+    </div>
+  );
+}
 
 // ── Schedule Board ────────────────────────────────────────────────────────
 function Board({jobs,onSelect}){
@@ -115,21 +305,15 @@ function Board({jobs,onSelect}){
   const now=tn();const np=t2p(now);const showNow=pt(now)>=DAY_START*60&&pt(now)<=DAY_END*60;
   return(
     <div style={{background:"#fff",border:"1px solid #e0e0e0",borderRadius:8,overflow:"hidden",boxShadow:"0 1px 3px rgba(0,0,0,0.12)",fontFamily:F}}>
-      {/* Header */}
       <div style={{display:"flex",borderBottom:"1px solid #e8eaed",background:"#f8f9fa"}}>
         <div style={{width:120,flexShrink:0,padding:"10px 14px",fontSize:11,color:"#80868b",fontWeight:600,letterSpacing:"0.05em",textTransform:"uppercase",borderRight:"1px solid #e8eaed"}}>Plumber</div>
         <div style={{flex:1,position:"relative",height:36}}>
-          {hrs.map(h=>(
-            <div key={h} style={{position:"absolute",left:`${(h-DAY_START)/(DAY_END-DAY_START)*100}%`,top:0,height:"100%",borderLeft:"1px solid #e8eaed",display:"flex",alignItems:"center",paddingLeft:4}}>
-              <span style={{fontSize:10,color:"#9aa0a6",fontWeight:500}}>{h>12?`${h-12}pm`:h===12?"12pm":`${h}am`}</span>
-            </div>
-          ))}
+          {hrs.map(h=><div key={h} style={{position:"absolute",left:`${(h-DAY_START)/(DAY_END-DAY_START)*100}%`,top:0,height:"100%",borderLeft:"1px solid #e8eaed",display:"flex",alignItems:"center",paddingLeft:4}}><span style={{fontSize:10,color:"#9aa0a6",fontWeight:500}}>{h>12?`${h-12}pm`:h===12?"12pm":`${h}am`}</span></div>)}
           {showNow&&<div style={{position:"absolute",left:`${np}%`,top:0,bottom:0,width:2,background:"#ea4335",zIndex:5}}><div style={{position:"absolute",top:2,left:3,fontSize:9,color:"#ea4335",fontWeight:600,whiteSpace:"nowrap"}}>{now}</div></div>}
         </div>
       </div>
-      {/* Rows */}
       {TEAM.map((pl,pi)=>{
-        const pj=jobs.filter(j=>j.assignee===pl);const c=PC[pl];
+        const pj=jobs.filter(j=>j.assignee===pl);const c=PC[pl]||PC.Unknown;
         const hasActive=pj.some(j=>["in-progress","travelling"].includes(j.status));
         return(
           <div key={pl} style={{display:"flex",borderBottom:pi<TEAM.length-1?"1px solid #f1f3f4":"none",minHeight:64,background:pi%2===0?"#fff":"#fafafa"}}>
@@ -149,24 +333,13 @@ function Board({jobs,onSelect}){
                 const act=["travelling","arrived","in-progress"].includes(job.status);
                 const isLate=job.status==="late-alert";
                 return(
-                  <div key={job.id} onClick={()=>onSelect(job)}
-                    title={`${job.address} — ${job.jobType} — ${sc.label}`}
-                    style={{position:"absolute",left:`${l}%`,width:`${w}%`,top:5,bottom:5,
-                      background:isLate?"#ffebee":act?sc.bg:jcolor.bg,
-                      border:`1px solid ${isLate?"#ef5350":act?sc.border:jcolor.border}`,
-                      borderLeft:`3px solid ${isLate?"#ef5350":act?sc.border:jcolor.border}`,
-                      borderRadius:4,cursor:"pointer",overflow:"hidden",zIndex:2,
-                      boxShadow:act?"0 1px 4px rgba(0,0,0,0.2)":"0 1px 2px rgba(0,0,0,0.08)",
-                      transition:"all 0.15s"}}
+                  <div key={job.id} onClick={()=>onSelect(job)} title={`${job.address} — ${job.jobType} — ${sc.label}`}
+                    style={{position:"absolute",left:`${l}%`,width:`${w}%`,top:5,bottom:5,background:isLate?"#ffebee":act?sc.bg:jcolor.bg,border:`1px solid ${isLate?"#ef5350":act?sc.border:jcolor.border}`,borderLeft:`3px solid ${isLate?"#ef5350":act?sc.border:jcolor.border}`,borderRadius:4,cursor:"pointer",overflow:"hidden",zIndex:2,boxShadow:act?"0 1px 4px rgba(0,0,0,0.2)":"0 1px 2px rgba(0,0,0,0.08)",transition:"all 0.15s"}}
                     onMouseEnter={e=>{e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.25)";e.currentTarget.style.zIndex=10;}}
                     onMouseLeave={e=>{e.currentTarget.style.boxShadow=act?"0 1px 4px rgba(0,0,0,0.2)":"0 1px 2px rgba(0,0,0,0.08)";e.currentTarget.style.zIndex=2;}}>
                     <div style={{padding:"3px 7px",height:"100%",display:"flex",flexDirection:"column",justifyContent:"center"}}>
-                      <div style={{fontSize:11,color:isLate?"#b71c1c":act?sc.text:jcolor.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:1.3}}>
-                        {job.timeStart} {job.address.split(",")[0]}
-                      </div>
-                      <div style={{fontSize:10,color:isLate?"#ef5350":act?sc.text:jcolor.text,opacity:0.8,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>
-                        {job.jobType}{job.workOrder?.keyNumber?` · Key ${job.workOrder.keyNumber}`:""} {isLate?"⚠":act?"●":""}
-                      </div>
+                      <div style={{fontSize:11,color:isLate?"#b71c1c":act?sc.text:jcolor.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:1.3}}>{job.timeStart} {job.address.split(",")[0]}</div>
+                      <div style={{fontSize:10,color:isLate?"#ef5350":act?sc.text:jcolor.text,opacity:0.8,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{job.jobType}{job.workOrder?.keyNumber?` · Key ${job.workOrder.keyNumber}`:""}{isLate?" ⚠":act?" ●":""}</div>
                     </div>
                   </div>
                 );
@@ -176,100 +349,26 @@ function Board({jobs,onSelect}){
           </div>
         );
       })}
-      {/* Legend */}
       <div style={{padding:"10px 16px",borderTop:"1px solid #e8eaed",display:"flex",gap:14,flexWrap:"wrap",background:"#f8f9fa",alignItems:"center"}}>
         <span style={{fontSize:10,color:"#80868b",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.05em"}}>Status:</span>
-        {Object.entries(STATUS_COLORS).slice(0,5).map(([k,v])=>(
-          <div key={k} style={{display:"flex",alignItems:"center",gap:5}}>
-            <div style={{width:10,height:10,background:v.bg,border:`2px solid ${v.border}`,borderRadius:2}}/>
-            <span style={{fontSize:10,color:"#5f6368"}}>{v.label}</span>
-          </div>
-        ))}
+        {Object.entries(STATUS_COLORS).slice(0,5).map(([k,v])=><div key={k} style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:10,height:10,background:v.bg,border:`2px solid ${v.border}`,borderRadius:2}}/><span style={{fontSize:10,color:"#5f6368"}}>{v.label}</span></div>)}
       </div>
     </div>
   );
 }
 
-// ── Job Pool ──────────────────────────────────────────────────────────────
-function JobPool({poolJobs,onSchedule}){
-  const [areaFilter,setArea]=useState("All");
-  const [typeFilter,setType]=useState("All");
-  const [search,setSearch]=useState("");
-  const areas=["All",...AREAS.filter(a=>poolJobs.some(j=>j.area===a))];
-  const types=["All",...[...new Set(poolJobs.map(j=>j.jobType))]];
-  const filtered=poolJobs.filter(j=>{
-    const byA=areaFilter==="All"||j.area===areaFilter;
-    const byT=typeFilter==="All"||j.jobType===typeFilter;
-    const byS=!search||j.address.toLowerCase().includes(search.toLowerCase())||j.agentName.toLowerCase().includes(search.toLowerCase());
-    return byA&&byT&&byS;
-  });
-  // Group by area
-  const grouped={};filtered.forEach(j=>{if(!grouped[j.area])grouped[j.area]=[];grouped[j.area].push(j);});
-  return(
-    <div style={{fontFamily:F}}>
-      {/* Filters */}
-      <div style={{background:"#fff",border:"1px solid #e0e0e0",borderRadius:8,padding:"14px 16px",marginBottom:16,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
-        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
-          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search address or agent..."
-            style={{flex:1,minWidth:180,border:"1px solid #e0e0e0",borderRadius:6,padding:"7px 12px",fontSize:13,color:"#3c4043",fontFamily:F,outline:"none",background:"#f8f9fa"}}/>
-          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
-            {areas.map(a=><button key={a} onClick={()=>setArea(a)} style={{background:areaFilter===a?"#1a73e8":"#f1f3f4",color:areaFilter===a?"#fff":"#5f6368",border:"none",borderRadius:16,padding:"5px 14px",fontSize:11,fontWeight:500,cursor:"pointer",fontFamily:F}}>{a}</button>)}
-          </div>
-          <select value={typeFilter} onChange={e=>setType(e.target.value)} style={{border:"1px solid #e0e0e0",borderRadius:6,padding:"7px 10px",fontSize:12,color:"#3c4043",fontFamily:F,background:"#f8f9fa",outline:"none"}}>
-            {types.map(t=><option key={t}>{t}</option>)}
-          </select>
-        </div>
-        <div style={{marginTop:10,fontSize:12,color:"#80868b"}}>{filtered.length} jobs in pool{areaFilter!=="All"?` — ${areaFilter}`:""}</div>
-      </div>
-      {/* Groups */}
-      {Object.entries(grouped).map(([area,aJobs])=>(
-        <div key={area} style={{marginBottom:20}}>
-          <div style={{fontSize:12,fontWeight:700,color:"#5f6368",letterSpacing:"0.08em",textTransform:"uppercase",marginBottom:8,paddingLeft:2}}>{area} — {aJobs.length} jobs</div>
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:10}}>
-            {aJobs.map(job=>{
-              const c=jc(job.jobType);const urgent=job.priority==="urgent";
-              return(
-                <div key={job.id} style={{background:urgent?"#fff8f8":c.bg,border:`1px solid ${urgent?"#ef5350":c.border}`,borderRadius:8,padding:"12px 14px",cursor:"pointer",boxShadow:"0 1px 2px rgba(0,0,0,0.08)",transition:"all 0.15s"}}
-                  onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.15)"}
-                  onMouseLeave={e=>e.currentTarget.style.boxShadow="0 1px 2px rgba(0,0,0,0.08)"}>
-                  <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:6,gap:8}}>
-                    <div style={{fontSize:13,fontWeight:600,color:urgent?"#b71c1c":c.text,lineHeight:1.3,flex:1}}>{urgent?"⚠ ":""}{job.address}</div>
-                    <div style={{fontSize:10,fontWeight:600,color:c.text,background:"rgba(255,255,255,0.7)",border:`1px solid ${c.border}`,borderRadius:12,padding:"2px 8px",whiteSpace:"nowrap",flexShrink:0}}>{job.jobType}</div>
-                  </div>
-                  <div style={{fontSize:11,color:"#5f6368",marginBottom:4}}>{job.agentName} · {job.ivNumber}</div>
-                  {job.notes&&<div style={{fontSize:11,color:"#80868b",marginBottom:8,lineHeight:1.4}}>{job.notes}</div>}
-                  <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                    <a href={`tel:${job.tenantPhone?.replace(/\s/g,"")}`} onClick={e=>e.stopPropagation()} style={{fontSize:11,color:"#1a73e8",textDecoration:"none"}}>{job.tenantName} {job.tenantPhone}</a>
-                    <button onClick={e=>{e.stopPropagation();onSchedule(job);}}
-                      style={{marginLeft:"auto",background:"#1a73e8",color:"#fff",border:"none",borderRadius:16,padding:"4px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:F}}>Schedule</button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-      {filtered.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"#9aa0a6",fontSize:14}}>No jobs match this filter</div>}
-    </div>
-  );
-}
-
-// ── My Jobs view ──────────────────────────────────────────────────────────
+// ── My Jobs ───────────────────────────────────────────────────────────────
 function MyJobs({jobs,plumber,onSelect}){
   const mj=jobs.filter(j=>j.assignee===plumber).sort((a,b)=>pt(a.timeStart)-pt(b.timeStart));
-  const c=PC[plumber]||PC.Richie;
+  const c=PC[plumber]||PC.Unknown;
   return(
     <div style={{padding:"16px",fontFamily:F}}>
-      <div style={{fontSize:13,fontWeight:600,color:c.text,marginBottom:16,display:"flex",alignItems:"center",gap:8}}>
-        <div style={{width:10,height:10,borderRadius:"50%",background:c.dot}}/>{plumber} — {mj.length} job{mj.length!==1?"s":""} today
-      </div>
+      <div style={{fontSize:13,fontWeight:600,color:c.text,marginBottom:16,display:"flex",alignItems:"center",gap:8}}><div style={{width:10,height:10,borderRadius:"50%",background:c.dot}}/>{plumber} — {mj.length} job{mj.length!==1?"s":""} today</div>
       {mj.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"#9aa0a6",fontSize:14}}>No jobs scheduled today</div>}
       {mj.map(job=>{
-        const s=STATUS_COLORS[job.status]||STATUS_COLORS.pending;const jcolor=jc(job.jobType);
-        const act=["travelling","arrived","in-progress"].includes(job.status);
+        const s=STATUS_COLORS[job.status]||STATUS_COLORS.pending;const jcolor=jc(job.jobType);const act=["travelling","arrived","in-progress"].includes(job.status);
         return(
-          <div key={job.id} onClick={()=>onSelect(job)}
-            style={{background:act?s.bg:jcolor.bg,border:`1px solid ${act?s.border:jcolor.border}`,borderLeft:`4px solid ${act?s.border:jcolor.border}`,borderRadius:8,padding:"14px 16px",marginBottom:10,cursor:"pointer",boxShadow:act?"0 2px 8px rgba(0,0,0,0.15)":"0 1px 2px rgba(0,0,0,0.08)",transition:"all 0.15s"}}
+          <div key={job.id} onClick={()=>onSelect(job)} style={{background:act?s.bg:jcolor.bg,border:`1px solid ${act?s.border:jcolor.border}`,borderLeft:`4px solid ${act?s.border:jcolor.border}`,borderRadius:8,padding:"14px 16px",marginBottom:10,cursor:"pointer",boxShadow:act?"0 2px 8px rgba(0,0,0,0.15)":"0 1px 2px rgba(0,0,0,0.08)",transition:"all 0.15s"}}
             onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.2)"}
             onMouseLeave={e=>e.currentTarget.style.boxShadow=act?"0 2px 8px rgba(0,0,0,0.15)":"0 1px 2px rgba(0,0,0,0.08)"}>
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
@@ -278,7 +377,7 @@ function MyJobs({jobs,plumber,onSelect}){
             </div>
             <div style={{fontSize:15,color:"#202124",fontWeight:600,marginBottom:5,lineHeight:1.3}}>{job.address}</div>
             <div style={{fontSize:12,color:"#5f6368",marginBottom:job.tenantName?5:0,display:"flex",gap:10,flexWrap:"wrap"}}>
-              <span>{job.jobType}</span><span>·</span><span>{job.ivNumber}</span>
+              <span>{job.jobType}</span>{job.ivNumber&&<><span>·</span><span>{job.ivNumber}</span></>}
               {job.workOrder?.keyNumber&&<span style={{color:"#e65100",fontWeight:600}}>Key #{job.workOrder.keyNumber}</span>}
               {job.workOrder?.spendLimit&&<span style={{color:"#c62828",fontWeight:600}}>{job.workOrder.spendLimit}</span>}
             </div>
@@ -290,16 +389,102 @@ function MyJobs({jobs,plumber,onSelect}){
   );
 }
 
-// ── Schedule Modal (for pool jobs) ────────────────────────────────────────
+// ── Job Pool ──────────────────────────────────────────────────────────────
+function JobPool({poolJobs,onSchedule}){
+  const [search,setSearch]=useState("");
+  const [typeFilter,setType]=useState("All");
+  const types=["All",...[...new Set(poolJobs.map(j=>j.jobType))]];
+  const filtered=poolJobs.filter(j=>{
+    const byT=typeFilter==="All"||j.jobType===typeFilter;
+    const byS=!search||j.address.toLowerCase().includes(search.toLowerCase())||j.agentName?.toLowerCase().includes(search.toLowerCase());
+    return byT&&byS;
+  });
+  return(
+    <div style={{fontFamily:F}}>
+      <div style={{background:"#fff",border:"1px solid #e0e0e0",borderRadius:8,padding:"14px 16px",marginBottom:16,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",alignItems:"center"}}>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search address or agent..."
+            style={{flex:1,minWidth:180,border:"1px solid #e0e0e0",borderRadius:6,padding:"7px 12px",fontSize:13,color:"#3c4043",fontFamily:F,outline:"none",background:"#f8f9fa"}}/>
+          <select value={typeFilter} onChange={e=>setType(e.target.value)} style={{border:"1px solid #e0e0e0",borderRadius:6,padding:"7px 10px",fontSize:12,color:"#3c4043",fontFamily:F,background:"#f8f9fa",outline:"none"}}>
+            {types.map(t=><option key={t}>{t}</option>)}
+          </select>
+        </div>
+        <div style={{marginTop:8,fontSize:12,color:"#80868b"}}>{filtered.length} unscheduled jobs</div>
+      </div>
+      {filtered.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"#9aa0a6",fontSize:14}}>No unscheduled jobs found</div>}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(320px,1fr))",gap:10}}>
+        {filtered.map(job=>{
+          const c=jc(job.jobType);const urgent=job.jobType==="Urgent";
+          return(
+            <div key={job.id} style={{background:urgent?"#fff8f8":c.bg,border:`1px solid ${urgent?"#ef5350":c.border}`,borderRadius:8,padding:"12px 14px",boxShadow:"0 1px 2px rgba(0,0,0,0.08)",transition:"all 0.15s"}}
+              onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.15)"}
+              onMouseLeave={e=>e.currentTarget.style.boxShadow="0 1px 2px rgba(0,0,0,0.08)"}>
+              <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:6,gap:8}}>
+                <div style={{fontSize:13,fontWeight:600,color:urgent?"#b71c1c":c.text,lineHeight:1.3,flex:1}}>{urgent?"⚠ ":""}{job.address}</div>
+                <div style={{fontSize:10,fontWeight:600,color:c.text,background:"rgba(255,255,255,0.7)",border:`1px solid ${c.border}`,borderRadius:12,padding:"2px 8px",whiteSpace:"nowrap",flexShrink:0}}>{job.jobType}</div>
+              </div>
+              {job.agentName&&<div style={{fontSize:11,color:"#5f6368",marginBottom:4}}>{job.agentName}{job.ivNumber?` · ${job.ivNumber}`:""}</div>}
+              {job.notes&&<div style={{fontSize:11,color:"#80868b",marginBottom:8,lineHeight:1.4}}>{job.notes.slice(0,120)}{job.notes.length>120?"...":""}</div>}
+              <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                {job.tenantPhone&&<a href={`tel:${job.tenantPhone.replace(/\s/g,"")}`} onClick={e=>e.stopPropagation()} style={{fontSize:11,color:"#1a73e8",textDecoration:"none"}}>{job.tenantName||"Tenant"} {job.tenantPhone}</a>}
+                <button onClick={()=>onSchedule(job)} style={{marginLeft:"auto",background:"#1a73e8",color:"#fff",border:"none",borderRadius:16,padding:"4px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:F}}>Schedule</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Schedule Modal ────────────────────────────────────────────────────────
 function ScheduleModal({job,onConfirm,onClose}){
-  const [pl,setPl]=useState("Richie");const [date,setDate]=useState(new Date().toISOString().split("T")[0]);const [start,setStart]=useState("09:00");const [end,setEnd]=useState("11:00");
+  const [pl,setPl]=useState("Richie");
+  const today=new Date().toISOString().split("T")[0];
+  const [date,setDate]=useState(today);
+  const [start,setStart]=useState("09:00");
+  const [end,setEnd]=useState("11:00");
+  const [saving,setSaving]=useState(false);
+
+  const confirm=async()=>{
+    setSaving(true);
+    // Create Calendar event
+    try {
+      const startDT=`${date}T${start}:00`;const endDT=`${date}T${end}:00`;
+      const attendees=[
+        {email:"vivaorganise@gmail.com"},
+        {email:NAME_TO_EMAIL[pl]||"info@vivaplumbing.com"},
+      ];
+      const event={
+        summary:`${job.address}${job.tenantNumber?` #${job.tenantNumber}`:""}`,
+        description:`${job.notes||""}\n\nNotes:\n\nTime     Depart:\nTime      Arrive:\nTime Complete:\n\nIs this job complete (Y/N/Not Sure):\n\nIs further action required:\n\nJob Materials:\n\nJob Story:\n`,
+        start:{dateTime:startDT,timeZone:"Australia/Brisbane"},
+        end:{dateTime:endDT,timeZone:"Australia/Brisbane"},
+        attendees,
+      };
+      const resp=await window.gapi.client.calendar.events.insert({calendarId:"primary",resource:event});
+      const newJob={
+        ...job,id:resp.result.id,calendarEventId:resp.result.id,
+        assignee:pl,timeStart:start,timeEnd:end,status:"pending",
+        actionLog:[],story:"",furtherAction:"",newArrivalTime:"",
+        departedAt:null,arrivedAt:null,commencedAt:null,completedAt:null,
+      };
+      onConfirm(newJob);
+    } catch(e) {
+      console.error("Failed to create calendar event:",e);
+      // Still add to local state even if calendar fails
+      onConfirm({...job,id:"local_"+Date.now(),assignee:pl,timeStart:start,timeEnd:end,status:"pending",actionLog:[],story:"",furtherAction:"",newArrivalTime:"",departedAt:null,arrivedAt:null,commencedAt:null,completedAt:null});
+    }
+    setSaving(false);
+  };
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:20}}>
       <div style={{background:"#fff",borderRadius:12,maxWidth:440,width:"100%",boxShadow:"0 8px 24px rgba(0,0,0,0.2)",fontFamily:F,overflow:"hidden"}}>
         <div style={{padding:"20px 24px",borderBottom:"1px solid #e8eaed",background:"#f8f9fa"}}>
           <div style={{fontSize:11,fontWeight:600,color:"#80868b",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:4}}>Schedule Job</div>
           <div style={{fontSize:14,fontWeight:600,color:"#202124"}}>{job.address}</div>
-          <div style={{fontSize:12,color:"#5f6368",marginTop:2}}>{job.jobType} · {job.agentName}</div>
+          <div style={{fontSize:12,color:"#5f6368",marginTop:2}}>{job.jobType}{job.agentName?` · ${job.agentName}`:""}</div>
         </div>
         <div style={{padding:"20px 24px"}}>
           <div style={{marginBottom:14}}>
@@ -312,7 +497,7 @@ function ScheduleModal({job,onConfirm,onClose}){
             <div style={{fontSize:11,fontWeight:600,color:"#5f6368",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Date</div>
             <input type="date" value={date} onChange={e=>setDate(e.target.value)} style={{border:"1px solid #e0e0e0",borderRadius:6,padding:"8px 12px",fontSize:13,width:"100%",boxSizing:"border-box",fontFamily:F,outline:"none"}}/>
           </div>
-          <div style={{display:"flex",gap:12,marginBottom:4}}>
+          <div style={{display:"flex",gap:12}}>
             <div style={{flex:1}}>
               <div style={{fontSize:11,fontWeight:600,color:"#5f6368",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Start</div>
               <input type="time" value={start} onChange={e=>setStart(e.target.value)} style={{border:"1px solid #e0e0e0",borderRadius:6,padding:"8px 12px",fontSize:13,width:"100%",boxSizing:"border-box",fontFamily:F,outline:"none"}}/>
@@ -325,7 +510,7 @@ function ScheduleModal({job,onConfirm,onClose}){
         </div>
         <div style={{padding:"16px 24px",borderTop:"1px solid #e8eaed",display:"flex",gap:10,justifyContent:"flex-end"}}>
           <button onClick={onClose} style={{background:"transparent",border:"1px solid #e0e0e0",color:"#5f6368",padding:"9px 20px",borderRadius:6,fontSize:13,cursor:"pointer",fontFamily:F}}>Cancel</button>
-          <button onClick={()=>onConfirm({...job,id:"ev_"+Date.now(),assignee:pl,timeStart:start,timeEnd:end,status:"pending",actionLog:[],story:"",furtherAction:"",newArrivalTime:"",departedAt:null,arrivedAt:null,commencedAt:null,completedAt:null})} style={{background:"#1a73e8",color:"#fff",border:"none",padding:"9px 24px",borderRadius:6,fontSize:13,fontWeight:600,cursor:"pointer",fontFamily:F}}>Schedule Job</button>
+          <button onClick={confirm} disabled={saving} style={{background:saving?"#9aa0a6":"#1a73e8",color:"#fff",border:"none",padding:"9px 24px",borderRadius:6,fontSize:13,fontWeight:600,cursor:saving?"not-allowed":"pointer",fontFamily:F}}>{saving?"Saving...":"Schedule Job"}</button>
         </div>
       </div>
     </div>
@@ -335,14 +520,14 @@ function ScheduleModal({job,onConfirm,onClose}){
 // ── Job Drawer ────────────────────────────────────────────────────────────
 function Drawer({job,allJobs,onClose,onUpdate}){
   const nj=allJobs.filter(j=>j.assignee===job.assignee&&j.id!==job.id&&["pending","travelling"].includes(j.status)).sort((a,b)=>pt(a.timeStart)-pt(b.timeStart))[0]||null;
-  const [notes,setNotes]=useState(job.notes);const [story,setStory]=useState(job.story);const [edited,setEdited]=useState(false);const [flags,setFlags]=useState([]);const [gen,setGen]=useState(false);const [showComp,setShowComp]=useState(false);const [fa,setFa]=useState(job.furtherAction||"");const [copied,setCopied]=useState(false);const [showDir,setShowDir]=useState(false);const [dirRead,setDirRead]=useState(false);const [showNext,setShowNext]=useState(false);const [ms,setMs]=useState(()=>initM(job.jobType));const [cust,setCust]=useState([]);const [showWO,setShowWO]=useState(false);
-  const s=STATUS_COLORS[job.status]||STATUS_COLORS.pending;const c=PC[job.assignee]||PC.Richie;const jcolor=jc(job.jobType);
+  const [notes,setNotes]=useState(job.notes||"");const [story,setStory]=useState(job.story||"");const [edited,setEdited]=useState(false);const [flags,setFlags]=useState([]);const [gen,setGen]=useState(false);const [showComp,setShowComp]=useState(false);const [fa,setFa]=useState(job.furtherAction||"");const [copied,setCopied]=useState(false);const [showDir,setShowDir]=useState(false);const [dirRead,setDirRead]=useState(false);const [showNext,setShowNext]=useState(false);const [ms,setMs]=useState(()=>initM(job.jobType));const [cust,setCust]=useState([]);const [showWO,setShowWO]=useState(false);
+  const s=STATUS_COLORS[job.status]||STATUS_COLORS.pending;const c=PC[job.assignee]||PC.Unknown;const jcolor=jc(job.jobType);
   const al=(action)=>[...(job.actionLog||[]),{time:tn(),actor:job.assignee,action}];
   const upd=(id,u)=>onUpdate(id,u);
-  const handleStart=()=>upd(job.id,{status:"travelling",departedAt:tn(),actionLog:al("Departed for job")});
+  const handleStart=()=>{upd(job.id,{status:"travelling",departedAt:tn(),actionLog:al("Departed for job")});if(job.calendarEventId)updateCalendarEvent(job.calendarEventId,{notes:`Departed: ${tn()}`});};
   const handleArr=()=>{const t=job.departedAt?td(job.departedAt,tn()):null;upd(job.id,{status:"arrived",arrivedAt:tn(),actionLog:al(`Arrived on site${t?" — travel "+t:""}`)});setShowDir(true);};
   const handleComm=()=>{upd(job.id,{status:"in-progress",commencedAt:tn(),actionLog:al("Work commenced")});setShowDir(false);};
-  const handleComp=()=>{if(!fa)return;const wt=job.commencedAt?td(job.commencedAt,tn()):null;upd(job.id,{status:"ready-to-invoice",completedAt:tn(),story,notes,furtherAction:fa,actionLog:al(`Completed${wt?" — on tools "+wt:""} — ${fa}`)});setShowComp(false);if(nj)setShowNext(true);else onClose();};
+  const handleComp=()=>{if(!fa)return;const wt=job.commencedAt?td(job.commencedAt,tn()):null;const updates={status:"ready-to-invoice",completedAt:tn(),story,notes,furtherAction:fa,actionLog:al(`Completed${wt?" — on tools "+wt:""} — ${fa}`)};upd(job.id,updates);if(job.calendarEventId)updateCalendarEvent(job.calendarEventId,{notes,story});setShowComp(false);if(nj)setShowNext(true);else onClose();};
   const handleNT=()=>{onUpdate(nj.id,{status:"travelling",departedAt:tn(),actionLog:[...(nj.actionLog||[]),{time:tn(),actor:nj.assignee,action:"Departed for job"}]});onClose();};
   const updM=(id,v)=>{if(id==="__c"){setCust(p=>[...p,v]);return;}setMs(p=>({...p,[id]:v}));};
   const genStory=async()=>{if(!notes.trim())return;setGen(true);setFlags([]);const mt=mToTxt(job.jobType,ms);const ct=cust.length?"\nOther: "+cust.join(", "):"";
@@ -362,7 +547,6 @@ function Drawer({job,allJobs,onClose,onUpdate}){
     <div style={{position:"fixed",inset:0,zIndex:100,display:"flex"}}>
       <div onClick={onClose} style={{flex:1,background:"rgba(0,0,0,0.4)"}}/>
       <div style={{width:"min(520px,100vw)",background:"#fff",borderLeft:"1px solid #e0e0e0",display:"flex",flexDirection:"column",overflow:"hidden",fontFamily:F,boxShadow:"-4px 0 20px rgba(0,0,0,0.15)"}}>
-        {/* Header */}
         <div style={{padding:"18px 20px",borderBottom:`3px solid ${headerBorder}`,background:headerBg,flexShrink:0}}>
           <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
             <div style={{flex:1,minWidth:0}}>
@@ -372,7 +556,8 @@ function Drawer({job,allJobs,onClose,onUpdate}){
               </div>
               <div style={{fontSize:16,color:"#202124",fontWeight:700,lineHeight:1.3,marginBottom:4}}>{job.address}</div>
               <div style={{fontSize:12,color:"#5f6368",display:"flex",gap:10,flexWrap:"wrap"}}>
-                <span>{job.timeStart}–{job.timeEnd}</span><span>·</span><span>{job.jobType}</span><span>·</span><span>{job.ivNumber}</span>
+                <span>{job.timeStart}–{job.timeEnd}</span><span>·</span><span>{job.jobType}</span>
+                {job.ivNumber&&<><span>·</span><span>{job.ivNumber}</span></>}
                 {job.workOrder?.keyNumber&&<span style={{color:"#e65100",fontWeight:700}}>Key #{job.workOrder.keyNumber}</span>}
                 {job.workOrder?.spendLimit&&<span style={{color:"#c62828",fontWeight:700}}>{job.workOrder.spendLimit}</span>}
               </div>
@@ -380,39 +565,31 @@ function Drawer({job,allJobs,onClose,onUpdate}){
             <button onClick={onClose} style={{background:"rgba(255,255,255,0.8)",border:"1px solid #e0e0e0",color:"#5f6368",fontSize:16,cursor:"pointer",padding:"6px 12px",borderRadius:6,flexShrink:0}}>✕</button>
           </div>
         </div>
-        {/* Body */}
         <div style={{flex:1,overflowY:"auto",padding:"16px 20px"}}>
-          {/* Time strip */}
           {ti.length>0&&<div style={{display:"flex",gap:0,flexWrap:"wrap",marginBottom:14,padding:"10px 14px",background:"#f8f9fa",border:"1px solid #e8eaed",borderRadius:8}}>
             {ti.map((t,i)=><div key={i} style={{marginRight:20,marginBottom:4}}><div style={{fontSize:10,fontWeight:600,color:"#80868b",textTransform:"uppercase",letterSpacing:"0.05em"}}>{t.l}</div><div style={{fontSize:13,color:"#3c4043",fontWeight:500,marginTop:2}}>{t.v}{t.sub&&<span style={{fontSize:11,color:"#9aa0a6"}}> ({t.sub})</span>}</div></div>)}
           </div>}
-          {/* Contacts */}
           <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap"}}>
             {job.tenantName&&<a href={`tel:${job.tenantPhone?.replace(/\s/g,"")}`} style={{fontSize:12,color:"#1a73e8",textDecoration:"none",background:"#e8f0fe",border:"1px solid #c5d8fb",borderRadius:20,padding:"6px 14px",display:"inline-flex",alignItems:"center",gap:5}}>📞 {job.tenantName}{job.tenantNumber?` #${job.tenantNumber}`:""} — {job.tenantPhone}</a>}
             {job.agentName&&<a href={`tel:${job.agentPhone?.replace(/\s/g,"")}`} style={{fontSize:12,color:"#188038",textDecoration:"none",background:"#e6f4ea",border:"1px solid #ceead6",borderRadius:20,padding:"6px 14px",display:"inline-flex",alignItems:"center",gap:5}}>🏢 {job.agentName} — {job.agentPhone}</a>}
           </div>
-          {/* Work order */}
           {job.workOrder&&<div style={{marginBottom:14}}>
             <button onClick={()=>setShowWO(!showWO)} style={{background:"#f8f9fa",border:"1px solid #e8eaed",color:"#3c4043",padding:"8px 14px",fontSize:12,fontWeight:500,cursor:"pointer",borderRadius:8,display:"flex",alignItems:"center",gap:8,width:"100%",fontFamily:F}}>
-              {showWO?"▲":"▼"} Work Order — {job.workOrder.agency}
+              {showWO?"▲":"▼"} Work Order{job.workOrder.agency?` — ${job.workOrder.agency}`:""}
               {job.workOrder.spendLimit&&<span style={{color:"#c62828",fontWeight:700,marginLeft:4}}>{job.workOrder.spendLimit}</span>}
               {job.workOrder.hasPhotos&&<span>📷</span>}
               {job.workOrder.url&&<a href={job.workOrder.url} target="_blank" rel="noopener noreferrer" onClick={e=>e.stopPropagation()} style={{marginLeft:"auto",fontSize:11,color:"#1a73e8",background:"#e8f0fe",border:"1px solid #c5d8fb",borderRadius:12,padding:"2px 10px",textDecoration:"none",fontWeight:600}}>View PDF</a>}
             </button>
             {showWO&&<div style={{background:"#f8f9fa",border:"1px solid #e8eaed",borderRadius:8,padding:"14px",marginTop:6}}>
-              <div style={{display:"flex",gap:16,flexWrap:"wrap",marginBottom:10,fontSize:12}}>
-                {job.workOrder.keyNumber&&<div><div style={{fontSize:10,fontWeight:600,color:"#80868b",textTransform:"uppercase",marginBottom:2}}>Key</div><span style={{color:"#e65100",fontWeight:700,fontSize:14}}>#{job.workOrder.keyNumber}</span></div>}
-                {job.workOrder.spendLimit&&<div><div style={{fontSize:10,fontWeight:600,color:"#80868b",textTransform:"uppercase",marginBottom:2}}>Spend Limit</div><span style={{color:"#c62828",fontWeight:700,fontSize:14}}>{job.workOrder.spendLimit}</span></div>}
-              </div>
-              <div style={{fontSize:13,color:"#3c4043",lineHeight:1.6}}>{job.workOrder.instructions}</div>
+              {job.workOrder.keyNumber&&<div style={{marginBottom:8}}><span style={{fontSize:10,fontWeight:600,color:"#80868b",textTransform:"uppercase"}}>Key </span><span style={{color:"#e65100",fontWeight:700,fontSize:14}}>#{job.workOrder.keyNumber}</span></div>}
+              {job.workOrder.instructions&&<div style={{fontSize:13,color:"#3c4043",lineHeight:1.6}}>{job.workOrder.instructions}</div>}
             </div>}
           </div>}
-          {/* Directive gate */}
           {showDir&&<div style={{background:"#e6f4ea",border:"1px solid #81c995",borderRadius:8,padding:16,marginBottom:14}}>
             <div style={{fontSize:12,fontWeight:700,color:"#137333",marginBottom:10}}>📋 Work Directives — Read Before Commencing</div>
             {job.workOrder?.keyNumber&&<div style={{fontSize:13,marginBottom:6}}>Key: <span style={{color:"#e65100",fontWeight:700}}>#{job.workOrder.keyNumber}</span></div>}
             {job.workOrder?.spendLimit&&<div style={{fontSize:13,marginBottom:8}}>Spend limit: <span style={{color:"#c62828",fontWeight:700}}>{job.workOrder.spendLimit}</span></div>}
-            <div style={{fontSize:13,color:"#1e4620",lineHeight:1.7,background:"rgba(255,255,255,0.7)",border:"1px solid #81c995",borderRadius:6,padding:"10px 12px",marginBottom:12}}>{job.workOrder?.instructions||job.notes}</div>
+            <div style={{fontSize:13,color:"#1e4620",lineHeight:1.7,background:"rgba(255,255,255,0.7)",border:"1px solid #81c995",borderRadius:6,padding:"10px 12px",marginBottom:12}}>{job.workOrder?.instructions||job.notes||"No specific instructions provided."}</div>
             <div onClick={()=>setDirRead(!dirRead)} style={{display:"flex",alignItems:"center",gap:10,cursor:"pointer",marginBottom:14,userSelect:"none"}}>
               <div style={{width:20,height:20,border:`2px solid ${dirRead?"#137333":"#81c995"}`,background:dirRead?"#137333":"transparent",borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,transition:"all 0.15s"}}>
                 {dirRead&&<span style={{color:"#fff",fontSize:13,fontWeight:700}}>✓</span>}
@@ -424,7 +601,6 @@ function Drawer({job,allJobs,onClose,onUpdate}){
               <button onClick={handleComm} disabled={!dirRead} style={{flex:1,background:dirRead?"#137333":"#e0e0e0",border:"none",color:dirRead?"#fff":"#9aa0a6",padding:"9px 0",fontSize:13,fontWeight:600,cursor:dirRead?"pointer":"not-allowed",borderRadius:6,fontFamily:F}}>✓ Commence Job</button>
             </div>
           </div>}
-          {/* Materials */}
           {showM&&!showDir&&<div style={{marginBottom:14}}>
             <div style={{fontSize:11,fontWeight:700,color:"#5f6368",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Materials Used</div>
             <div style={{background:"#fff",border:"1px solid #e8eaed",borderRadius:8,overflow:"hidden"}}>
@@ -435,7 +611,7 @@ function Drawer({job,allJobs,onClose,onUpdate}){
                   <div onClick={tog} style={{width:18,height:18,border:`2px solid ${sv.used?"#137333":"#dadce0"}`,background:sv.used?"#137333":"transparent",borderRadius:4,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,cursor:"pointer",transition:"all 0.15s"}}>
                     {sv.used&&<span style={{color:"#fff",fontSize:11,fontWeight:700}}>✓</span>}
                   </div>
-                  <div onClick={tog} style={{flex:1,fontSize:13,color:sv.used?"#137333":"#3c4043",cursor:"pointer",lineHeight:1.3,fontWeight:sv.used?500:400}}>{m.name}</div>
+                  <div onClick={tog} style={{flex:1,fontSize:13,color:sv.used?"#137333":"#3c4043",cursor:"pointer",fontWeight:sv.used?500:400}}>{m.name}</div>
                   {sv.used&&m.type==="qty"&&<div style={{display:"flex",alignItems:"center",border:"1px solid #dadce0",borderRadius:6,overflow:"hidden"}}>
                     <button onClick={()=>{const q=Math.max(0,(ms[m.id]?.qty||0)-1);updM(m.id,{...ms[m.id],qty:q,used:q>0});}} style={{background:"#f8f9fa",border:"none",color:"#5f6368",width:30,height:30,fontSize:16,cursor:"pointer",fontFamily:F}}>−</button>
                     <span style={{color:"#202124",fontSize:13,fontWeight:600,minWidth:26,textAlign:"center"}}>{sv.qty}</span>
@@ -450,13 +626,11 @@ function Drawer({job,allJobs,onClose,onUpdate}){
               </div>
             </div>
           </div>}
-          {/* Notes */}
           {showM&&!showDir&&<div style={{marginBottom:14}}>
             <div style={{fontSize:11,fontWeight:700,color:"#5f6368",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Job Notes</div>
             <textarea value={notes} onChange={e=>setNotes(e.target.value)} style={{width:"100%",minHeight:80,background:"#f8f9fa",border:"1px solid #e8eaed",borderRadius:8,color:"#3c4043",fontFamily:F,fontSize:13,lineHeight:1.6,padding:"10px 12px",resize:"vertical",outline:"none",boxSizing:"border-box"}}/>
             <button onClick={genStory} disabled={gen} style={{marginTop:8,background:gen?"#f1f3f4":"#1a73e8",border:"none",color:gen?"#9aa0a6":"#fff",padding:"8px 18px",fontSize:12,fontWeight:600,cursor:gen?"not-allowed":"pointer",borderRadius:20,fontFamily:F}}>{gen?"Generating...":"⚡ Generate Invoice Story"}</button>
           </div>}
-          {/* Story */}
           {story&&<div style={{marginBottom:14}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
               <div style={{fontSize:11,fontWeight:700,color:"#5f6368",textTransform:"uppercase",letterSpacing:"0.05em"}}>Invoice Draft {edited&&<span style={{color:"#f9ab00",fontSize:10,fontWeight:600}}>· edited</span>}</div>
@@ -465,20 +639,18 @@ function Drawer({job,allJobs,onClose,onUpdate}){
                 <button onClick={()=>{navigator.clipboard.writeText(story);setCopied(true);setTimeout(()=>setCopied(false),2000);}} style={{background:copied?"#e6f4ea":"#e8f0fe",border:`1px solid ${copied?"#81c995":"#c5d8fb"}`,color:copied?"#137333":"#1a73e8",padding:"4px 12px",fontSize:11,fontWeight:600,cursor:"pointer",borderRadius:12,fontFamily:F}}>{copied?"Copied ✓":"Copy"}</button>
               </div>
             </div>
-            <textarea value={story} onChange={e=>{setStory(e.target.value);setEdited(true);}} style={{width:"100%",minHeight:140,background:"#f8f9fa",border:"1px solid #e8eaed",borderRadius:8,color:"#3c4043",fontFamily:mono||F,fontSize:12,lineHeight:1.75,padding:"12px 14px",resize:"vertical",outline:"none",boxSizing:"border-box"}}/>
+            <textarea value={story} onChange={e=>{setStory(e.target.value);setEdited(true);}} style={{width:"100%",minHeight:140,background:"#f8f9fa",border:"1px solid #e8eaed",borderRadius:8,color:"#3c4043",fontFamily:mono,fontSize:12,lineHeight:1.75,padding:"12px 14px",resize:"vertical",outline:"none",boxSizing:"border-box"}}/>
             {flags.length>0&&<div style={{marginTop:8,background:"#fef7e0",border:"1px solid #f9ab00",borderRadius:8,padding:"12px 14px"}}>
               <div style={{fontSize:11,fontWeight:700,color:"#e37400",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>⚠ Review Before Sending</div>
               {flags.map((f,i)=><div key={i} style={{fontSize:12,color:"#b06000",lineHeight:1.6,marginBottom:i<flags.length-1?6:0,display:"flex",gap:8}}><span style={{color:"#f9ab00",flexShrink:0}}>—</span><span>{f}</span></div>)}
             </div>}
           </div>}
-          {/* Further action */}
           {showComp&&<div style={{marginBottom:14}}>
             <div style={{fontSize:11,fontWeight:700,color:"#5f6368",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Further Action Required?</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
               {["None","Quote Required","Follow-up","Return Visit","Referral"].map(opt=><button key={opt} onClick={()=>setFa(opt)} style={{background:fa===opt?"#ea4335":"#f1f3f4",border:"none",color:fa===opt?"#fff":"#5f6368",padding:"7px 16px",fontSize:12,fontWeight:600,cursor:"pointer",borderRadius:20,fontFamily:F}}>{opt}</button>)}
             </div>
           </div>}
-          {/* Next job */}
           {showNext&&nj&&<div style={{background:"#e8f0fe",border:"1px solid #c5d8fb",borderRadius:8,padding:16,marginBottom:14}}>
             <div style={{fontSize:11,fontWeight:700,color:"#1a73e8",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:6}}>Next Job</div>
             <div style={{fontSize:14,color:"#202124",fontWeight:600,marginBottom:3}}>{nj.address}</div>
@@ -488,13 +660,11 @@ function Drawer({job,allJobs,onClose,onUpdate}){
               <button onClick={()=>{setShowNext(false);onClose();}} style={{background:"transparent",border:"1px solid #c5d8fb",color:"#1a73e8",padding:"10px 16px",fontSize:12,cursor:"pointer",borderRadius:6,fontFamily:F}}>Later</button>
             </div>
           </div>}
-          {/* Action log */}
           {job.actionLog?.length>0&&<div style={{borderTop:"1px solid #e8eaed",paddingTop:12,marginTop:8}}>
             <div style={{fontSize:11,fontWeight:700,color:"#9aa0a6",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Action Log</div>
             {job.actionLog.map((e,i)=><div key={i} style={{fontSize:12,color:"#80868b",marginBottom:5,display:"flex",gap:12}}><span style={{color:"#9aa0a6",flexShrink:0,fontFamily:mono}}>{e.time}</span><span style={{color:"#9aa0a6",flexShrink:0}}>{e.actor}</span><span style={{color:"#5f6368"}}>{e.action}</span></div>)}
           </div>}
         </div>
-        {/* Action bar */}
         {!showDir&&!showNext&&<div style={{borderTop:"1px solid #e8eaed",padding:"14px 20px",background:"#f8f9fa",flexShrink:0,display:"flex",gap:10,flexWrap:"wrap"}}>
           {job.status==="pending"&&<Btn bg="#f9ab00" col="#fff" txt="🚗 Start Job" onClick={handleStart}/>}
           {job.status==="travelling"&&<Btn bg="#34a853" col="#fff" txt="📍 Arrived on Site" onClick={handleArr}/>}
@@ -511,63 +681,81 @@ function Drawer({job,allJobs,onClose,onUpdate}){
 
 // ── Main App ──────────────────────────────────────────────────────────────
 export default function App(){
-  const [schedJobs,setSchedJobs]=useState(SCHED_JOBS);
-  const [poolJobs,setPoolJobs]=useState(POOL_JOBS);
+  const [user,setUser]=useState(null);
+  const [schedJobs,setSchedJobs]=useState([]);
+  const [poolJobs,setPoolJobs]=useState([]);
+  const [loading,setLoading]=useState(false);
   const [view,setView]=useState("board");
   const [myP,setMyP]=useState("Richie");
   const [sel,setSel]=useState(null);
   const [schedModal,setSchedModal]=useState(null);
   const [now,setNow]=useState(tn());
+  const [lastSync,setLastSync]=useState(null);
   const checked=useRef(new Set());
+
+  // Load Google API scripts
   useEffect(()=>{
-    rno();
-    const t=setInterval(()=>{const n=tn();setNow(n);const nm=pt(n);setJobs(prev=>prev.map(j=>{if(j.status!=="pending"||checked.current.has(j.id))return j;if(nm>=pt(j.timeEnd)-30){checked.current.add(j.id);sno("Viva Jobs","Action required: "+j.address);return{...j,status:"late-alert"};}return j;}));},15000);
+    const s1=document.createElement("script");s1.src="https://apis.google.com/js/api.js";
+    s1.onload=()=>{window.gapi.load("client",async()=>{try{await window.gapi.client.init({discoveryDocs:[DISCOVERY_DOC]});}catch(e){console.error(e);}});};
+    document.head.appendChild(s1);
+    const s2=document.createElement("script");s2.src="https://accounts.google.com/gsi/client";document.head.appendChild(s2);
+  },[]);
+
+  // Fetch Calendar events
+  const fetchCalendarJobs=useCallback(async()=>{
+    if(!window.gapi?.client?.calendar)return;
+    setLoading(true);
+    try{
+      const today=new Date();
+      const todayStr=today.toISOString().split("T")[0];
+      // Get Sunday for pool jobs
+      const dayOfWeek=today.getDay();
+      const sunday=new Date(today);sunday.setDate(today.getDate()-(dayOfWeek===0?7:dayOfWeek));
+      const sundayStr=sunday.toISOString().split("T")[0];
+      const sundayEnd=new Date(sunday);sundayEnd.setDate(sunday.getDate()+1);
+      const sundayEndStr=sundayEnd.toISOString().split("T")[0];
+      // Today's events
+      const todayStart=`${todayStr}T00:00:00+10:00`;
+      const todayEnd=`${todayStr}T23:59:59+10:00`;
+      const todayResp=await window.gapi.client.calendar.events.list({
+        calendarId:"primary",timeMin:todayStart,timeMax:todayEnd,
+        singleEvents:true,orderBy:"startTime",maxResults:50,
+      });
+      const todayEvents=(todayResp.result.items||[]).filter(e=>e.start?.dateTime&&e.summary&&!e.summary.toLowerCase().includes("pickup keys")&&!e.summary.toLowerCase().includes("pmc pickup"));
+      setSchedJobs(todayEvents.map(eventToJob));
+      // Sunday pool events
+      const sunResp=await window.gapi.client.calendar.events.list({
+        calendarId:"primary",
+        timeMin:`${sundayStr}T00:00:00+10:00`,
+        timeMax:`${sundayEndStr}T00:00:00+10:00`,
+        singleEvents:true,orderBy:"startTime",maxResults:100,
+      });
+      const sunEvents=(sunResp.result.items||[]).filter(e=>e.summary&&!e.summary.toLowerCase().includes("pickup keys")&&!e.summary.toLowerCase().includes("pmc pickup"));
+      setPoolJobs(sunEvents.map(eventToJob));
+      setLastSync(new Date().toLocaleTimeString("en-AU",{hour:"2-digit",minute:"2-digit"}));
+    }catch(e){console.error("Calendar fetch error:",e);}
+    setLoading(false);
+  },[]);
+
+  useEffect(()=>{if(user){fetchCalendarJobs();setMyP(user.name);}rno();},[user,fetchCalendarJobs]);
+
+  // Late alert checker
+  useEffect(()=>{
+    const t=setInterval(()=>{const n=tn();setNow(n);const nm=pt(n);setSchedJobs(prev=>prev.map(j=>{if(j.status!=="pending"||checked.current.has(j.id))return j;if(nm>=pt(j.timeEnd)-30){checked.current.add(j.id);sno("Viva Jobs","Action required: "+j.address);return{...j,status:"late-alert"};}return j;}));},15000);
     return()=>clearInterval(t);
   },[]);
-  const setJobs=f=>setSchedJobs(f);
+
   const updJob=(id,u)=>{setSchedJobs(p=>p.map(j=>j.id===id?{...j,...u}:j));setSel(p=>p?.id===id?{...p,...u}:p);};
-  const handleSchedule=(job)=>setSchedModal(job);
-  const confirmSchedule=(newJob)=>{setSchedJobs(p=>[...p,newJob]);setPoolJobs(p=>p.filter(j=>j.id!==newJob.id.replace("ev_"+Date.now(),"").replace("ev_","p_")));setSchedModal(null);};
+  const confirmSchedule=(newJob)=>{setSchedJobs(p=>[...p,newJob]);setPoolJobs(p=>p.filter(j=>j.id!==schedModal?.id));setSchedModal(null);};
+
   const cnt={act:schedJobs.filter(j=>["travelling","arrived","in-progress"].includes(j.status)).length,late:schedJobs.filter(j=>j.status==="late-alert").length,inv:schedJobs.filter(j=>j.status==="ready-to-invoice").length};
-  const today=new Date().toLocaleDateString("en-AU",{weekday:"short",day:"numeric",month:"short"});
+  const today=new Date().toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"long"});
+
+  if(!user) return <SignIn onSignedIn={setUser}/>;
+
   return(
     <div style={{minHeight:"100vh",background:"#f8f9fa",fontFamily:F,color:"#202124"}}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
       <style>{`::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#f1f3f4}::-webkit-scrollbar-thumb{background:#dadce0;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
       {sel&&<Drawer job={sel} allJobs={schedJobs} onClose={()=>setSel(null)} onUpdate={updJob}/>}
-      {schedModal&&<ScheduleModal job={schedModal} onConfirm={confirmSchedule} onClose={()=>setSchedModal(null)}/>}
-      {/* Header */}
-      <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
-        <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0"}}>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <div style={{width:28,height:28,background:"#e05a2b",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#fff",fontSize:13,fontWeight:800}}>V</span></div>
-            <span style={{fontSize:16,fontWeight:700,color:"#202124"}}>Viva Jobs</span>
-          </div>
-          <span style={{fontSize:12,color:"#9aa0a6",paddingLeft:4}}>{today}</span>
-        </div>
-        <div style={{display:"flex",gap:16,fontSize:12,alignItems:"center"}}>
-          <span style={{color:"#9aa0a6",fontFamily:mono}}>{now}</span>
-          {cnt.late>0&&<span style={{color:"#ea4335",fontWeight:700,animation:"pulse 1.5s infinite"}}>⚠ {cnt.late} late</span>}
-          {cnt.act>0&&<span style={{color:"#e37400",fontWeight:600}}>{cnt.act} active</span>}
-          {cnt.inv>0&&<span style={{color:"#1a73e8",fontWeight:600}}>{cnt.inv} to invoice</span>}
-          <span style={{background:"#fce8b2",color:"#b06000",fontSize:11,fontWeight:700,padding:"3px 10px",borderRadius:12}}>{poolJobs.length} in pool</span>
-        </div>
-      </div>
-      {/* Nav */}
-      <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center"}}>
-        {[{k:"board",l:"▦  Schedule Board"},{k:"myjobs",l:"☰  My Jobs"},{k:"pool",l:"📋  Job Pool"}].map(({k,l})=>(
-          <button key={k} onClick={()=>setView(k)} style={{background:"transparent",border:"none",borderBottom:`3px solid ${view===k?"#1a73e8":"transparent"}`,color:view===k?"#1a73e8":"#5f6368",padding:"14px 18px",fontSize:13,fontWeight:view===k?700:500,cursor:"pointer",fontFamily:F,transition:"all 0.15s",marginBottom:-1}}>{l}</button>
-        ))}
-        {view==="myjobs"&&<div style={{marginLeft:"auto",display:"flex",gap:6,padding:"8px 0"}}>
-          {TEAM.map(p=>{const c=PC[p];return<button key={p} onClick={()=>setMyP(p)} style={{background:myP===p?c.dot:"#f1f3f4",color:myP===p?"#fff":c.text,border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:F}}>{p}</button>;})}
-        </div>}
-      </div>
-      {/* Content */}
-      <div style={{padding:"20px 24px",maxWidth:1400,margin:"0 auto"}}>
-        {view==="board"&&<Board jobs={schedJobs} onSelect={setSel}/>}
-        {view==="myjobs"&&<MyJobs jobs={schedJobs} plumber={myP} onSelect={setSel}/>}
-        {view==="pool"&&<JobPool poolJobs={poolJobs} onSchedule={handleSchedule}/>}
-      </div>
-    </div>
-  );
-}
+      {schedModal&&<ScheduleModal job={schedModal} onConfirm={confirmSchedule} onClose={()=>setSchedModal(n
