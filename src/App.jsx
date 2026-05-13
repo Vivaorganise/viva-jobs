@@ -907,8 +907,12 @@ export default function App(){
         singleEvents:true,orderBy:"startTime",maxResults:50,
         fields:"items(id,summary,description,start,end,attendees,attachments)",
       });
-      const todayEvents=(todayResp.result.items||[]).filter(e=>e.start?.dateTime||e.start?.date);
-      setSchedJobs(processEvents(todayEvents));
+      const rawToday = todayResp.result.items||[];
+      console.log("Raw today events:", rawToday.length, rawToday.map(e=>e.summary));
+      const todayEvents = rawToday.filter(e=>e.start?.dateTime||e.start?.date);
+      const processed = processEvents(todayEvents);
+      console.log("Processed today jobs:", processed.length, processed.map(j=>j.address));
+      setSchedJobs(processed);
       // Sunday pool events
       const sunResp=await window.gapi.client.calendar.events.list({
         calendarId:"primary",
@@ -967,10 +971,8 @@ export default function App(){
       <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0"}}>
           <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src="https://i.imgur.com/OT43jJM.jpeg" alt="Viva Plumbing" style={{height:36,width:"auto",borderRadius:6,objectFit:"cover"}}/>
-            <div style={{display:"flex",flexDirection:"column",lineHeight:1}}>
-              <span style={{fontSize:11,color:"#9aa0a6",letterSpacing:"0.05em",textTransform:"uppercase"}}>Job Manager</span>
-            </div>
+            <img src="https://i.imgur.com/OT43jJM.jpeg" alt="Viva Plumbing" style={{height:44,width:"auto",borderRadius:8,objectFit:"cover",boxShadow:"0 1px 4px rgba(0,0,0,0.15)"}}/>
+            <span style={{fontSize:11,color:"#9aa0a6",letterSpacing:"0.05em",textTransform:"uppercase",fontFamily:F}}>Job Manager</span>
           </div>
           <span style={{fontSize:12,color:"#9aa0a6"}}>{todayLabel}</span>
         </div>
@@ -1010,7 +1012,11 @@ export default function App(){
       </div>}
 
       {/* Content */}
-      <div style={{padding:"20px 24px",maxWidth:1400,margin:"0 auto"}}>
+      <div style={{padding:"20px 24px",maxWidth:1400,margin:"0 auto",position:"relative"}}>
+        {/* Watermark */}
+        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:0,pointerEvents:"none",userSelect:"none"}}>
+          <img src="https://i.imgur.com/OT43jJM.jpeg" alt="" style={{width:500,height:"auto",opacity:0.04,filter:"grayscale(100%)"}}/>
+        </div>
         {loading&&schedJobs.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:"#9aa0a6"}}>
           <div style={{fontSize:32,marginBottom:12}}>📅</div>
           <div style={{fontSize:14,fontWeight:500}}>Loading your Calendar jobs...</div>
@@ -1025,6 +1031,7 @@ export default function App(){
           {view==="myjobs"&&<MyJobs jobs={schedJobs} plumber={myP} onSelect={setSel} viewDate={viewDate} onDateChange={(d)=>{setViewDate(d);fetchCalendarJobs(d);}} onRefresh={()=>fetchCalendarJobs(viewDate)}/>}
           {view==="pool"&&<JobPool poolJobs={poolJobs} onSchedule={setSchedModal} onSelect={setSel}/>}
         </>}
+      </div>
       </div>
     </div>
   );
