@@ -156,14 +156,20 @@ function parseJobType(title, desc) {
   return "Do and Charge";
 }
 
-// Check if event is a suburb header (all caps, no street number)
+// Check if event is a suburb header (all caps, no street number, no slash address)
 function isSuburbHeader(title) {
   if (!title) return true;
-  // Has a street number = real job
-  if (/\d/.test(title)) return false;
-  // All caps or mostly caps with no numbers = suburb header
-  const upper = title.replace(/[^A-Za-z]/g,"");
-  if (upper.length > 0 && upper === upper.toUpperCase() && title.length < 60) return true;
+  const t = title.trim();
+  // Has a digit = almost certainly a real job address
+  if (/\d/.test(t)) return false;
+  // Has a slash = likely an address like "1/23 Smith St"
+  if (t.includes("/")) return false;
+  // Only exclude if it's ALL CAPS words with no lowercase at all
+  // and doesn't contain common address words
+  const words = t.split(/[\s,/]+/).filter(Boolean);
+  const allCaps = words.every(w => w === w.toUpperCase() && w.length > 1);
+  const hasLower = /[a-z]/.test(t);
+  if (allCaps && !hasLower && words.length <= 6) return true;
   return false;
 }
 
@@ -960,13 +966,10 @@ export default function App(){
       {/* Header */}
       <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0"}}>
-          <div style={{display:"flex",alignItems:"center",gap:8}}>
-            <div style={{display:"flex",alignItems:"center",gap:0,background:"#e05a2b",borderRadius:8,padding:"4px 10px"}}>
-              <span style={{color:"#fff",fontSize:14,fontWeight:900,letterSpacing:"-0.5px"}}>VIVA</span>
-            </div>
+          <div style={{display:"flex",alignItems:"center",gap:10}}>
+            <img src="https://i.imgur.com/OT43jJM.jpeg" alt="Viva Plumbing" style={{height:36,width:"auto",borderRadius:6,objectFit:"cover"}}/>
             <div style={{display:"flex",flexDirection:"column",lineHeight:1}}>
-              <span style={{fontSize:13,fontWeight:700,color:"#202124",letterSpacing:"-0.3px"}}>Plumbing</span>
-              <span style={{fontSize:10,color:"#9aa0a6",letterSpacing:"0.05em",textTransform:"uppercase"}}>Job Manager</span>
+              <span style={{fontSize:11,color:"#9aa0a6",letterSpacing:"0.05em",textTransform:"uppercase"}}>Job Manager</span>
             </div>
           </div>
           <span style={{fontSize:12,color:"#9aa0a6"}}>{todayLabel}</span>
