@@ -49,6 +49,8 @@ const JT_COLORS = {
   "Urgent":                  {bg:"#ffd7d7",border:"#cc3030",text:"#8a0000"},
   "Return Visit":            {bg:"#e8eaed",border:"#7a7a7a",text:"#2a2a2a"},
   "Do and Charge":           {bg:"#d2e3fc",border:"#4a7acc",text:"#1a3a7a"},
+  "Water Compliance":        {bg:"#e3f2fd",border:"#0288d1",text:"#01579b"},
+  "Return Visit":            {bg:"#fff8e1",border:"#f9a825",text:"#e65100"},
 };
 
 const STATUS_COLORS = {
@@ -138,20 +140,60 @@ function getAssignee(event) {
   return "Richie";
 }
 
-// Parse job type from event title/description
+// Parse job type from event title only (not description)
 function parseJobType(title, desc) {
-  const t = (title + " " + (desc||"")).toLowerCase();
-  if (t.includes("quote only")) return "Quote Only";
-  if (t.includes("quoted work")) return "Quoted Work";
-  if (t.includes("urgent")) return "Urgent";
-  if (t.includes("return")) return "Return Visit";
-  if (t.includes("hot water") || t.includes("hwu")) return "Hot Water";
-  if (t.includes("toilet")) return "Toilet";
-  if (t.includes("drain") || t.includes("blocked")) return "Blocked Drain";
-  if (t.includes("tap") || t.includes("washer")) return "Tap Service";
-  if (t.includes("flexi") || t.includes("health check")) return "Flexi Hose / Health Check";
-  if (t.includes("do and charge")) return "Do and Charge";
+  const t = title.toUpperCase();
+  const d = (desc||"").toUpperCase();
+  // Title-based detection first
+  if (t.includes("QUOTE ONLY")) return "Quote Only";
+  if (t.includes("QUOTED WORK")) return "Quoted Work";
+  if (t.includes("URGENT")) return "Urgent";
+  // DUPLICATE means return visit / follow-up
+  if (t.includes("DUPLICATE")) return "Return Visit";
+  // Water compliance detected from notes keyword WELS
+  if (d.includes("WELS") || t.includes("WELS") || t.includes("COMPLIANCE") || t.includes("WATER COMPLIANCE")) return "Water Compliance";
+  // Default - Do and Charge (green, no keyword needed)
   return "Do and Charge";
+}
+
+// Check if event is a suburb header (all caps, no street number)
+function isSuburbHeader(title) {
+  if (!title) return true;
+  // Has a street number = real job
+  if (/\d/.test(title)) return false;
+  // All caps or mostly caps with no numbers = suburb header
+  const upper = title.replace(/[^A-Za-z]/g,"");
+  if (upper.length > 0 && upper === upper.toUpperCase() && title.length < 60) return true;
+  return false;
+}
+
+// Extract brief from description
+function extractBrief(desc) {
+  if (!desc) return "";
+  const lines = desc.split("\n").map(l=>l.trim()).filter(Boolean);
+  // Skip template lines, find meaningful content
+  const skip = ["notes:","depart:","arrive:","complete:","materials:","story:","quote:","labour:","---","remember","wels","is the property","water metre","must conduct","toilets must","test operation"];
+  for (const line of lines) {
+    const ll = line.toLowerCase();
+    if (skip.some(s=>ll.startsWith(s))) continue;
+    if (ll.length < 5) continue;
+    if (/^\d+-\d+/.test(line)) continue; // skip codes like "10-2 1#"
+    return line.slice(0,80) + (line.length>80?"...":"");
+  }
+  return "";
+}
+
+// Extract IV number
+function extractIV(title, desc) {
+  const match = (title+" "+(desc||"")).match(/IV-\d+/i);
+  return match ? match[0].toUpperCase() : "";
+}
+
+// Check if job is complete (has invoice/quote number at top of notes)
+function isComplete(title, desc) {
+  if (!desc) return false;
+  const firstLines = desc.split("\n").slice(0,3).join(" ");
+  return /IV-\d+|QU-\d+|INV\d+/i.test(firstLines);
 }
 
 // Parse notes section from Calendar event description
@@ -174,11 +216,7 @@ function parseStatus(desc) {
   return "pending";
 }
 
-// Parse IV number from title or description
-function parseIV(title, desc) {
-  const match = (title + " " + (desc||"")).match(/IV-\d+/i);
-  return match ? match[0].toUpperCase() : "";
-}
+// parseIV handled by extractIV above
 
 // Parse tenant number from title (e.g. "#2")
 function parseTenantNum(title) {
@@ -381,7 +419,7 @@ function Board({jobs,onSelect}){
                     onMouseLeave={e=>{e.currentTarget.style.boxShadow=act?"0 1px 4px rgba(0,0,0,0.2)":"0 1px 2px rgba(0,0,0,0.08)";e.currentTarget.style.zIndex=2;}}>
                     <div style={{padding:"3px 7px",height:"100%",display:"flex",flexDirection:"column",justifyContent:"center"}}>
                       <div style={{fontSize:11,color:isLate?"#b71c1c":act?sc.text:jcolor.text,fontWeight:600,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",lineHeight:1.3}}>{job.timeStart} {job.address.split(",")[0]}</div>
-                      <div style={{fontSize:10,color:isLate?"#ef5350":act?sc.text:jcolor.text,opacity:0.8,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{job.jobType}{job.workOrder?.keyNumber?` · Key ${job.workOrder.keyNumber}`:""}{isLate?" ⚠":act?" ●":""}</div>
+                      <div style={{fontSize:10,color:isLate?"#ef5350":act?sc.text:jcolor.text,opacity:0.8,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",marginTop:1}}>{job.jobType}{job.isDuplicate?" · Follow-up":""}{job.workOrder?.keyNumber?` · Key ${job.workOrder.keyNumber}`:""}{job.brief?` · ${job.brief}`:""}{isLate?" ⚠":act?" ●":""}</div>
                     </div>
                   </div>
                 );
@@ -400,12 +438,21 @@ function Board({jobs,onSelect}){
 }
 
 // ── My Jobs ───────────────────────────────────────────────────────────────
-function MyJobs({jobs,plumber,onSelect}){
+function MyJobs({jobs,plumber,onSelect,viewDate,onDateChange,onRefresh}){
   const mj=jobs.filter(j=>j.assignee===plumber).sort((a,b)=>pt(a.timeStart)-pt(b.timeStart));
   const c=PC[plumber]||PC.Unknown;
   return(
     <div style={{padding:"16px",fontFamily:F}}>
-      <div style={{fontSize:13,fontWeight:600,color:c.text,marginBottom:16,display:"flex",alignItems:"center",gap:8}}><div style={{width:10,height:10,borderRadius:"50%",background:c.dot}}/>{plumber} — {mj.length} job{mj.length!==1?"s":""} today</div>
+      {/* Day picker for My Jobs */}
+      <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,background:"#fff",border:"1px solid #e0e0e0",borderRadius:8,padding:"10px 14px",boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
+        <button onClick={()=>{const d=new Date(viewDate);d.setDate(d.getDate()-1);onDateChange(d);}} style={{background:"#f1f3f4",border:"none",color:"#5f6368",width:32,height:32,borderRadius:"50%",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>‹</button>
+        <input type="date" value={viewDate?.toISOString().split("T")[0]||new Date().toISOString().split("T")[0]} onChange={e=>onDateChange(new Date(e.target.value))}
+          style={{flex:1,border:"1px solid #e0e0e0",borderRadius:6,padding:"6px 10px",fontSize:13,color:"#3c4043",fontFamily:F,outline:"none",background:"#f8f9fa"}}/>
+        <button onClick={()=>{const d=new Date(viewDate);d.setDate(d.getDate()+1);onDateChange(d);}} style={{background:"#f1f3f4",border:"none",color:"#5f6368",width:32,height:32,borderRadius:"50%",fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>›</button>
+        {viewDate?.toDateString()!==new Date().toDateString()&&<button onClick={()=>onDateChange(new Date())} style={{background:"#e8f0fe",border:"none",color:"#1a73e8",padding:"6px 14px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:F}}>Today</button>}
+        <button onClick={onRefresh} style={{background:"#f1f3f4",border:"none",color:"#5f6368",padding:"6px 14px",borderRadius:20,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:F}}>↻</button>
+      </div>
+      <div style={{fontSize:13,fontWeight:600,color:c.text,marginBottom:16,display:"flex",alignItems:"center",gap:8}}><div style={{width:10,height:10,borderRadius:"50%",background:c.dot}}/>{plumber} — {mj.length} job{mj.length!==1?"s":""}</div>
       {mj.length===0&&<div style={{textAlign:"center",padding:"40px 0",color:"#9aa0a6",fontSize:14}}>No jobs scheduled today</div>}
       {mj.map(job=>{
         const s=STATUS_COLORS[job.status]||STATUS_COLORS.pending;const jcolor=jc(job.jobType);const act=["travelling","arrived","in-progress"].includes(job.status);
@@ -423,6 +470,8 @@ function MyJobs({jobs,plumber,onSelect}){
               {job.workOrder?.keyNumber&&<span style={{color:"#e65100",fontWeight:600}}>Key #{job.workOrder.keyNumber}</span>}
               {job.workOrder?.spendLimit&&<span style={{color:"#c62828",fontWeight:600}}>{job.workOrder.spendLimit}</span>}
             </div>
+            {job.brief&&<div style={{fontSize:12,color:"#80868b",marginBottom:4,fontStyle:"italic"}}>{job.brief}</div>}
+            {job.isDuplicate&&<div style={{fontSize:11,color:"#e65100",fontWeight:600,marginBottom:4}}>↩ Follow-up / Return visit</div>}
             {job.tenantName&&<div style={{fontSize:12,color:"#5f6368"}}>Tenant{job.tenantNumber?` #${job.tenantNumber}`:""}: <span style={{color:"#1a73e8"}}>{job.tenantName} — {job.tenantPhone}</span></div>}
           </div>
         );
@@ -432,7 +481,7 @@ function MyJobs({jobs,plumber,onSelect}){
 }
 
 // ── Job Pool ──────────────────────────────────────────────────────────────
-function JobPool({poolJobs,onSchedule}){
+function JobPool({poolJobs,onSchedule,onSelect}){
   const [search,setSearch]=useState("");
   const [typeFilter,setType]=useState("All");
   const types=["All",...[...new Set(poolJobs.map(j=>j.jobType))]];
@@ -458,7 +507,7 @@ function JobPool({poolJobs,onSchedule}){
         {filtered.map(job=>{
           const c=jc(job.jobType);const urgent=job.jobType==="Urgent";
           return(
-            <div key={job.id} style={{background:urgent?"#fff8f8":c.bg,border:`1px solid ${urgent?"#ef5350":c.border}`,borderRadius:8,padding:"12px 14px",boxShadow:"0 1px 2px rgba(0,0,0,0.08)",transition:"all 0.15s"}}
+            <div key={job.id} onClick={()=>onSelect(job)} style={{background:urgent?"#fff8f8":c.bg,border:`1px solid ${urgent?"#ef5350":c.border}`,borderRadius:8,padding:"12px 14px",boxShadow:"0 1px 2px rgba(0,0,0,0.08)",transition:"all 0.15s",cursor:"pointer"}}
               onMouseEnter={e=>e.currentTarget.style.boxShadow="0 2px 8px rgba(0,0,0,0.15)"}
               onMouseLeave={e=>e.currentTarget.style.boxShadow="0 1px 2px rgba(0,0,0,0.08)"}>
               <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:6,gap:8}}>
@@ -469,7 +518,7 @@ function JobPool({poolJobs,onSchedule}){
               {job.notes&&<div style={{fontSize:11,color:"#80868b",marginBottom:8,lineHeight:1.4}}>{job.notes.slice(0,120)}{job.notes.length>120?"...":""}</div>}
               <div style={{display:"flex",gap:8,alignItems:"center"}}>
                 {job.tenantPhone&&<a href={`tel:${job.tenantPhone.replace(/\s/g,"")}`} onClick={e=>e.stopPropagation()} style={{fontSize:11,color:"#1a73e8",textDecoration:"none"}}>{job.tenantName||"Tenant"} {job.tenantPhone}</a>}
-                <button onClick={()=>onSchedule(job)} style={{marginLeft:"auto",background:"#1a73e8",color:"#fff",border:"none",borderRadius:16,padding:"4px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:F}}>Schedule</button>
+                <button onClick={e=>{e.stopPropagation();onSchedule(job);}} style={{marginLeft:"auto",background:"#1a73e8",color:"#fff",border:"none",borderRadius:16,padding:"4px 14px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:F}}>Schedule</button>
               </div>
             </div>
           );
@@ -497,9 +546,18 @@ function ScheduleModal({job,onConfirm,onClose,defaultDate}){
         {email:"vivaorganise@gmail.com"},
         {email:NAME_TO_EMAIL[pl]||"info@vivaplumbing.com"},
       ];
+      // Build title with job type keyword
+      const titleKeyword = job.jobType==="Quoted Work"?" QUOTED WORK":job.jobType==="Quote Only"?" QUOTE ONLY":job.jobType==="Return Visit"?" DUPLICATE":"";
+      const tenantSuffix = job.tenantNumber ? ` #${job.tenantNumber}` : "";
+      const eventTitle = `${job.address}${tenantSuffix}${titleKeyword}`;
+
+      // Preserve original description if available, otherwise use template
+      const originalDesc = job.rawEvent?.description || "";
+      const templateDesc = originalDesc || `Notes:\n\n${job.notes||""}\n\n-----------------------------------\nTime     Depart:\nTime      Arrive:\nTime Complete:\n\nIs this job complete (Y/N/Not Sure):\n\nIs further action required - (Quote, Follow-up, Referral for additional work or Return visit?):\n\nJob Materials:\n\nJob Story:\n\n-----------------------------------\nQuote:\n\nLabour:\nMaterials:`;
+
       const event={
-        summary:`${job.address}${job.tenantNumber?` #${job.tenantNumber}`:""}`,
-        description:`${job.notes||""}\n\nNotes:\n\nTime     Depart:\nTime      Arrive:\nTime Complete:\n\nIs this job complete (Y/N/Not Sure):\n\nIs further action required:\n\nJob Materials:\n\nJob Story:\n`,
+        summary: eventTitle,
+        description: templateDesc,
         start:{dateTime:startDT,timeZone:"Australia/Brisbane"},
         end:{dateTime:endDT,timeZone:"Australia/Brisbane"},
         attendees,
@@ -587,7 +645,7 @@ function Drawer({job,allJobs,onClose,onUpdate,user}){
   if(job.completedAt)ti.push({l:"Completed",v:job.completedAt,sub:job.commencedAt?td(job.commencedAt,job.completedAt):null});
   const showM=["in-progress","ready-to-invoice","complete"].includes(job.status);const ql=["0","¼","½","¾","1"];
   const act=["travelling","arrived","in-progress"].includes(job.status);
-  const headerBg=act?s.bg:jcolor.bg;const headerBorder=act?s.border:jcolor.border;
+  const headerBg=act?(s?.bg||"#fff3e0"):(jcolor?.bg||"#e8f0fe");const headerBorder=act?(s?.border||"#ffa726"):(jcolor?.border||"#4a7acc");
   const Btn=({bg,col,txt,onClick,dis})=><button onClick={onClick} disabled={dis} style={{flex:1,background:dis?"#e0e0e0":bg,border:"none",color:dis?"#9aa0a6":col,padding:"12px 0",fontSize:13,fontWeight:600,cursor:dis?"not-allowed":"pointer",fontFamily:F,borderRadius:6}}>{txt}</button>;
   return(
     <div style={{position:"fixed",inset:0,zIndex:100,display:"flex"}}>
@@ -843,8 +901,8 @@ export default function App(){
         singleEvents:true,orderBy:"startTime",maxResults:50,
         fields:"items(id,summary,description,start,end,attendees,attachments)",
       });
-      const todayEvents=(todayResp.result.items||[]).filter(e=>e.start?.dateTime&&e.summary&&!e.summary.toLowerCase().includes("pickup keys")&&!e.summary.toLowerCase().includes("pmc pickup"));
-      setSchedJobs(todayEvents.map(eventToJob));
+      const todayEvents=(todayResp.result.items||[]).filter(e=>e.start?.dateTime||e.start?.date);
+      setSchedJobs(processEvents(todayEvents));
       // Sunday pool events
       const sunResp=await window.gapi.client.calendar.events.list({
         calendarId:"primary",
@@ -853,8 +911,8 @@ export default function App(){
         singleEvents:true,orderBy:"startTime",maxResults:100,
         fields:"items(id,summary,description,start,end,attendees,attachments)",
       });
-      const sunEvents=(sunResp.result.items||[]).filter(e=>e.summary&&!e.summary.toLowerCase().includes("pickup keys")&&!e.summary.toLowerCase().includes("pmc pickup"));
-      setPoolJobs(sunEvents.map(eventToJob));
+      const sunEvents=(sunResp.result.items||[]).filter(e=>e.summary);
+      setPoolJobs(processEvents(sunEvents));
       setLastSync(new Date().toLocaleTimeString("en-AU",{hour:"2-digit",minute:"2-digit"}));
     }catch(e){console.error("Calendar fetch error:",e);}
     setLoading(false);
@@ -902,9 +960,14 @@ export default function App(){
       {/* Header */}
       <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0"}}>
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <div style={{width:28,height:28,background:"#e05a2b",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#fff",fontSize:13,fontWeight:800}}>V</span></div>
-            <span style={{fontSize:16,fontWeight:700,color:"#202124"}}>Viva Jobs</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{display:"flex",alignItems:"center",gap:0,background:"#e05a2b",borderRadius:8,padding:"4px 10px"}}>
+              <span style={{color:"#fff",fontSize:14,fontWeight:900,letterSpacing:"-0.5px"}}>VIVA</span>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",lineHeight:1}}>
+              <span style={{fontSize:13,fontWeight:700,color:"#202124",letterSpacing:"-0.3px"}}>Plumbing</span>
+              <span style={{fontSize:10,color:"#9aa0a6",letterSpacing:"0.05em",textTransform:"uppercase"}}>Job Manager</span>
+            </div>
           </div>
           <span style={{fontSize:12,color:"#9aa0a6"}}>{todayLabel}</span>
         </div>
@@ -956,8 +1019,8 @@ export default function App(){
         </div>}
         {(schedJobs.length>0||view!=="board")&&<>
           {view==="board"&&<Board jobs={schedJobs} onSelect={setSel}/>}
-          {view==="myjobs"&&<MyJobs jobs={schedJobs} plumber={myP} onSelect={setSel}/>}
-          {view==="pool"&&<JobPool poolJobs={poolJobs} onSchedule={setSchedModal}/>}
+          {view==="myjobs"&&<MyJobs jobs={schedJobs} plumber={myP} onSelect={setSel} viewDate={viewDate} onDateChange={(d)=>{setViewDate(d);fetchCalendarJobs(d);}} onRefresh={()=>fetchCalendarJobs(viewDate)}/>}
+          {view==="pool"&&<JobPool poolJobs={poolJobs} onSchedule={setSchedModal} onSelect={setSel}/>}
         </>}
       </div>
     </div>
