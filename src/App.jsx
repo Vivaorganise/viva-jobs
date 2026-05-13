@@ -887,8 +887,29 @@ export default function App(){
   },[viewDate]);
 
   // Fetch Calendar events
+  // Filter and convert calendar events to job objects
+  const processEvents = (events) => {
+    return events
+      .filter(e => {
+        const s = e.summary||"";
+        if (!s) return false;
+        if (s.toLowerCase().includes("pickup keys")) return false;
+        if (s.toLowerCase().includes("pmc pickup")) return false;
+        if (isSuburbHeader(s)) return false;
+        return true;
+      })
+      .map(eventToJob);
+  };
+
   const fetchCalendarJobs=useCallback(async(dateOverride)=>{
-    if(!window.gapi?.client?.calendar)return;
+    if(!window.gapi?.client?.calendar){
+      console.log("Calendar API not ready yet");
+      return;
+    }
+    if(!window.gapi.client.getToken()){
+      console.log("No auth token available");
+      return;
+    }
     setLoading(true);
     try{
       const today=dateOverride||viewDate;
@@ -928,8 +949,10 @@ export default function App(){
     setLoading(false);
   },[]);
 
-  // Refetch when viewDate changes
-  useEffect(()=>{if(user){fetchCalendarJobs(viewDate);setMyP(user.name);}rno();},[user,viewDate]);
+  // Request notification permission
+  useEffect(()=>{ rno(); },[]);
+  // When viewDate changes and gapi is ready, refetch
+  useEffect(()=>{ if(user?.token && window.gapi?.client?.calendar){ fetchCalendarJobs(viewDate); } },[viewDate]);
 
   const goToDate=(d)=>{
     const nd=new Date(d);
@@ -970,9 +993,12 @@ export default function App(){
       {/* Header */}
       <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0"}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <img src="https://i.imgur.com/OT43jJM.jpeg" alt="Viva Plumbing" style={{height:44,width:"auto",borderRadius:8,objectFit:"cover",boxShadow:"0 1px 4px rgba(0,0,0,0.15)"}}/>
-            <span style={{fontSize:11,color:"#9aa0a6",letterSpacing:"0.05em",textTransform:"uppercase",fontFamily:F}}>Job Manager</span>
+          <div style={{display:"flex",alignItems:"center",gap:8}}>
+            <div style={{background:"#29b5d8",borderRadius:8,padding:"4px 10px",display:"flex",alignItems:"center",gap:6}}>
+              <span style={{color:"#fff",fontSize:15,fontWeight:900,letterSpacing:"-0.5px",fontFamily:F}}>viva</span>
+              <span style={{color:"rgba(255,255,255,0.7)",fontSize:11,fontWeight:400,fontFamily:F}}>plumbing</span>
+            </div>
+            <span style={{fontSize:10,color:"#9aa0a6",letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:F}}>Jobs</span>
           </div>
           <span style={{fontSize:12,color:"#9aa0a6"}}>{todayLabel}</span>
         </div>
@@ -991,7 +1017,7 @@ export default function App(){
         </div>
       </div>
       {/* Nav */}
-      <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center"}}>
+      <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center",overflow:"hidden",maxWidth:"100vw"}}>
         {[{k:"board",l:"▦  Schedule Board"},{k:"myjobs",l:"☰  My Jobs"},{k:"pool",l:`📋  Job Pool (${poolJobs.length})`}].map(({k,l})=>(
           <button key={k} onClick={()=>setView(k)} style={{background:"transparent",border:"none",borderBottom:`3px solid ${view===k?"#1a73e8":"transparent"}`,color:view===k?"#1a73e8":"#5f6368",padding:"14px 18px",fontSize:13,fontWeight:view===k?700:500,cursor:"pointer",fontFamily:F,transition:"all 0.15s",marginBottom:-1}}>{l}</button>
         ))}
@@ -1014,8 +1040,8 @@ export default function App(){
       {/* Content */}
       <div style={{padding:"20px 24px",maxWidth:1400,margin:"0 auto",position:"relative"}}>
         {/* Watermark */}
-        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:0,pointerEvents:"none",userSelect:"none"}}>
-          <img src="https://i.imgur.com/OT43jJM.jpeg" alt="" style={{width:500,height:"auto",opacity:0.04,filter:"grayscale(100%)"}}/>
+        <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",zIndex:0,pointerEvents:"none",userSelect:"none",opacity:0.04,fontSize:200,fontWeight:900,color:"#29b5d8",whiteSpace:"nowrap",letterSpacing:"-10px",fontFamily:F}}>
+          viva
         </div>
         {loading&&schedJobs.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:"#9aa0a6"}}>
           <div style={{fontSize:32,marginBottom:12}}>📅</div>
