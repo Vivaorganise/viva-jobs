@@ -171,6 +171,18 @@ function parseKeyNum(desc) {
 }
 
 // Convert Calendar event to job object
+function getDriveUrl(event) {
+  // Check for Drive attachments
+  if (event.attachments && event.attachments.length > 0) {
+    const pdf = event.attachments.find(a => a.mimeType === "application/pdf" || a.title?.toLowerCase().includes(".pdf"));
+    if (pdf) return pdf.fileUrl || `https://drive.google.com/file/d/${pdf.fileId}/view`;
+    return event.attachments[0].fileUrl || null;
+  }
+  // Check description for Drive links
+  const match = (event.description||"").match(/https:\/\/drive\.google\.com\/[^\s\n]+/);
+  return match ? match[0] : null;
+}
+
 function eventToJob(event) {
   const title = event.summary || "";
   const desc = event.description || "";
@@ -199,7 +211,7 @@ function eventToJob(event) {
     workOrder: {
       agency: "", keyNumber: parseKeyNum(desc), spendLimit: null,
       instructions: desc.replace(/Notes:.*$/si,"").trim().slice(0,300),
-      hasPhotos: false, url: null,
+      hasPhotos: (event.attachments||[]).length > 0, url: getDriveUrl(event),
     },
     story: "", actionLog: [], furtherAction: "", newArrivalTime: "",
     rawEvent: event,
@@ -438,10 +450,10 @@ function JobPool({poolJobs,onSchedule}){
 }
 
 // ── Schedule Modal ────────────────────────────────────────────────────────
-function ScheduleModal({job,onConfirm,onClose}){
+function ScheduleModal({job,onConfirm,onClose,defaultDate}){
   const [pl,setPl]=useState("Richie");
-  const today=new Date().toISOString().split("T")[0];
-  const [date,setDate]=useState(today);
+  const todayDef=defaultDate?defaultDate.toISOString().split("T")[0]:new Date().toISOString().split("T")[0];
+  const [date,setDate]=useState(todayDef);
   const [start,setStart]=useState("09:00");
   const [end,setEnd]=useState("11:00");
   const [saving,setSaving]=useState(false);
@@ -682,6 +694,7 @@ function Drawer({job,allJobs,onClose,onUpdate}){
 // ── Main App ──────────────────────────────────────────────────────────────
 export default function App(){
   const [user,setUser]=useState(null);
+  const [viewDate,setViewDate]=useState(new Date());
   const [schedJobs,setSchedJobs]=useState([]);
   const [poolJobs,setPoolJobs]=useState([]);
   const [loading,setLoading]=useState(false);
@@ -699,14 +712,14 @@ export default function App(){
     s1.onload=()=>{window.gapi.load("client",async()=>{try{await window.gapi.client.init({discoveryDocs:[DISCOVERY_DOC]});}catch(e){console.error(e);}});};
     document.head.appendChild(s1);
     const s2=document.createElement("script");s2.src="https://accounts.google.com/gsi/client";document.head.appendChild(s2);
-  },[]);
+  },[viewDate]);
 
   // Fetch Calendar events
-  const fetchCalendarJobs=useCallback(async()=>{
+  const fetchCalendarJobs=useCallback(async(dateOverride)=>{
     if(!window.gapi?.client?.calendar)return;
     setLoading(true);
     try{
-      const today=new Date();
+      const today=dateOverride||viewDate;
       const todayStr=today.toISOString().split("T")[0];
       // Get Sunday for pool jobs
       const dayOfWeek=today.getDay();
@@ -720,6 +733,7 @@ export default function App(){
       const todayResp=await window.gapi.client.calendar.events.list({
         calendarId:"primary",timeMin:todayStart,timeMax:todayEnd,
         singleEvents:true,orderBy:"startTime",maxResults:50,
+        fields:"items(id,summary,description,start,end,attendees,attachments)",
       });
       const todayEvents=(todayResp.result.items||[]).filter(e=>e.start?.dateTime&&e.summary&&!e.summary.toLowerCase().includes("pickup keys")&&!e.summary.toLowerCase().includes("pmc pickup"));
       setSchedJobs(todayEvents.map(eventToJob));
@@ -729,6 +743,7 @@ export default function App(){
         timeMin:`${sundayStr}T00:00:00+10:00`,
         timeMax:`${sundayEndStr}T00:00:00+10:00`,
         singleEvents:true,orderBy:"startTime",maxResults:100,
+        fields:"items(id,summary,description,start,end,attendees,attachments)",
       });
       const sunEvents=(sunResp.result.items||[]).filter(e=>e.summary&&!e.summary.toLowerCase().includes("pickup keys")&&!e.summary.toLowerCase().includes("pmc pickup"));
       setPoolJobs(sunEvents.map(eventToJob));
@@ -737,7 +752,16 @@ export default function App(){
     setLoading(false);
   },[]);
 
-  useEffect(()=>{if(user){fetchCalendarJobs();setMyP(user.name);}rno();},[user,fetchCalendarJobs]);
+  // Refetch when viewDate changes
+  useEffect(()=>{if(user){fetchCalendarJobs(viewDate);setMyP(user.name);}rno();},[user,viewDate]);
+
+  const goToDate=(d)=>{
+    const nd=new Date(d);
+    setViewDate(nd);
+  };
+  const prevDay=()=>{const d=new Date(viewDate);d.setDate(d.getDate()-1);setViewDate(d);};
+  const nextDay=()=>{const d=new Date(viewDate);d.setDate(d.getDate()+1);setViewDate(d);};
+  const goToday=()=>setViewDate(new Date());
 
   // Late alert checker
   useEffect(()=>{
@@ -746,10 +770,18 @@ export default function App(){
   },[]);
 
   const updJob=(id,u)=>{setSchedJobs(p=>p.map(j=>j.id===id?{...j,...u}:j));setSel(p=>p?.id===id?{...p,...u}:p);};
-  const confirmSchedule=(newJob)=>{setSchedJobs(p=>[...p,newJob]);setPoolJobs(p=>p.filter(j=>j.id!==schedModal?.id));setSchedModal(null);};
+  const confirmSchedule=(newJob)=>{
+    // Preserve work order and all metadata from the pool job
+    const poolJob=schedModal;
+    const merged={...newJob,workOrder:poolJob?.workOrder||newJob.workOrder,tenantName:poolJob?.tenantName||newJob.tenantName,tenantPhone:poolJob?.tenantPhone||newJob.tenantPhone,tenantNumber:poolJob?.tenantNumber||newJob.tenantNumber,agentName:poolJob?.agentName||newJob.agentName,agentPhone:poolJob?.agentPhone||newJob.agentPhone,ivNumber:poolJob?.ivNumber||newJob.ivNumber,notes:poolJob?.notes||newJob.notes};
+    setSchedJobs(p=>[...p,merged]);
+    setPoolJobs(p=>p.filter(j=>j.id!==schedModal?.id));
+    setSchedModal(null);
+  };
 
   const cnt={act:schedJobs.filter(j=>["travelling","arrived","in-progress"].includes(j.status)).length,late:schedJobs.filter(j=>j.status==="late-alert").length,inv:schedJobs.filter(j=>j.status==="ready-to-invoice").length};
-  const today=new Date().toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"long"});
+  const todayLabel=viewDate.toLocaleDateString("en-AU",{weekday:"long",day:"numeric",month:"long"});
+  const isToday=viewDate.toDateString()===new Date().toDateString();
 
   if(!user) return <SignIn onSignedIn={setUser}/>;
 
@@ -758,7 +790,7 @@ export default function App(){
       <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
       <style>{`::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#f1f3f4}::-webkit-scrollbar-thumb{background:#dadce0;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
       {sel&&<Drawer job={sel} allJobs={schedJobs} onClose={()=>setSel(null)} onUpdate={updJob}/>}
-      {schedModal&&<ScheduleModal job={schedModal} onConfirm={confirmSchedule} onClose={()=>setSchedModal(null)}/>}
+      {schedModal&&<ScheduleModal job={schedModal} onConfirm={confirmSchedule} onClose={()=>setSchedModal(null)} defaultDate={viewDate}/>}
       {/* Header */}
       <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
         <div style={{display:"flex",alignItems:"center",gap:12,padding:"12px 0"}}>
@@ -766,12 +798,11 @@ export default function App(){
             <div style={{width:28,height:28,background:"#e05a2b",borderRadius:6,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{color:"#fff",fontSize:13,fontWeight:800}}>V</span></div>
             <span style={{fontSize:16,fontWeight:700,color:"#202124"}}>Viva Jobs</span>
           </div>
-          <span style={{fontSize:12,color:"#9aa0a6"}}>{today}</span>
+          <span style={{fontSize:12,color:"#9aa0a6"}}>{todayLabel}</span>
         </div>
         <div style={{display:"flex",gap:12,fontSize:12,alignItems:"center"}}>
           <span style={{color:"#9aa0a6",fontFamily:mono}}>{now}</span>
-          {loading&&<span style={{color:"#1a73e8",fontSize:11}}>Syncing...</span>}
-          {lastSync&&!loading&&<button onClick={fetchCalendarJobs} style={{background:"none",border:"none",color:"#9aa0a6",fontSize:11,cursor:"pointer",fontFamily:F}}>↻ {lastSync}</button>}
+
           {cnt.late>0&&<span style={{color:"#ea4335",fontWeight:700,animation:"pulse 1.5s infinite"}}>⚠ {cnt.late} late</span>}
           {cnt.act>0&&<span style={{color:"#e37400",fontWeight:600}}>{cnt.act} active</span>}
           {cnt.inv>0&&<span style={{color:"#1a73e8",fontWeight:600}}>{cnt.inv} to invoice</span>}
@@ -785,29 +816,4 @@ export default function App(){
       {/* Nav */}
       <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center"}}>
         {[{k:"board",l:"▦  Schedule Board"},{k:"myjobs",l:"☰  My Jobs"},{k:"pool",l:`📋  Job Pool (${poolJobs.length})`}].map(({k,l})=>(
-          <button key={k} onClick={()=>setView(k)} style={{background:"transparent",border:"none",borderBottom:`3px solid ${view===k?"#1a73e8":"transparent"}`,color:view===k?"#1a73e8":"#5f6368",padding:"14px 18px",fontSize:13,fontWeight:view===k?700:500,cursor:"pointer",fontFamily:F,transition:"all 0.15s",marginBottom:-1}}>{l}</button>
-        ))}
-        {view==="myjobs"&&<div style={{marginLeft:"auto",display:"flex",gap:6,padding:"8px 0"}}>
-          {TEAM.map(p=>{const c=PC[p];return<button key={p} onClick={()=>setMyP(p)} style={{background:myP===p?c.dot:"#f1f3f4",color:myP===p?"#fff":c.text,border:"none",borderRadius:20,padding:"6px 16px",fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:F}}>{p}</button>;})}
-        </div>}
-      </div>
-      {/* Content */}
-      <div style={{padding:"20px 24px",maxWidth:1400,margin:"0 auto"}}>
-        {loading&&schedJobs.length===0&&<div style={{textAlign:"center",padding:"60px 0",color:"#9aa0a6"}}>
-          <div style={{fontSize:32,marginBottom:12}}>📅</div>
-          <div style={{fontSize:14,fontWeight:500}}>Loading your Calendar jobs...</div>
-        </div>}
-        {!loading&&schedJobs.length===0&&view==="board"&&<div style={{textAlign:"center",padding:"60px 0",color:"#9aa0a6"}}>
-          <div style={{fontSize:32,marginBottom:12}}>📅</div>
-          <div style={{fontSize:14,fontWeight:500,marginBottom:8}}>No jobs scheduled for today</div>
-          <div style={{fontSize:12}}>Jobs from your Google Calendar will appear here</div>
-        </div>}
-        {(schedJobs.length>0||view!=="board")&&<>
-          {view==="board"&&<Board jobs={schedJobs} onSelect={setSel}/>}
-          {view==="myjobs"&&<MyJobs jobs={schedJobs} plumber={myP} onSelect={setSel}/>}
-          {view==="pool"&&<JobPool poolJobs={poolJobs} onSchedule={setSchedModal}/>}
-        </>}
-      </div>
-    </div>
-  );
-}
+          <button key={k} onClick={()=>setView(k)} style={{background:"transparent",border:"none",borderBottom:`3px solid ${view===k?"#1a73e8":"transparent"}`,color:view===k?"#1a73e8":"#5f6368",padding:"14px 18px",fontSize:13,fontWeight:view===k?700:500,cursor:
