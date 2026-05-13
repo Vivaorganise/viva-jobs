@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 
 // ── Config ────────────────────────────────────────────────────────────────
 const CLIENT_ID = "485477368548-miajb1flq89rchpvjjnijp2nov3nit6p.apps.googleusercontent.com";
+const PICKER_API_KEY = "AIzaSyCEp9qInOxvwZEq0jVO0FNRnGHZ5KRVrqM";
 const SCOPES = "https://www.googleapis.com/auth/calendar";
 const DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest";
 
@@ -87,7 +88,29 @@ const getM=jt=>MATS[jt]||GM;
 const initM=jt=>{const s={};getM(jt).forEach(m=>{s[m.id]=m.type==="hose"?{used:false,length:"450"}:{used:false,qty:0};});return s;};
 const mToTxt=(jt,ms)=>{const ql=["0","1/4","1/2","3/4","1"];return getM(jt).filter(m=>ms[m.id]?.used).map(m=>{const s=ms[m.id];return m.type==="qty"?`${m.name} x${s.qty}`:m.type==="quarter"?`${m.name} x${ql[s.qty]}`:`${m.name} ${s.length}mm`;}).join("\n");};
 
-const IP=`You are a plumbing documentation assistant for Viva Plumbing, Brisbane. Convert rough plumber notes into a clean invoice description then review it. Rules: Open with "Called out to investigate...". Structure: findings > works > outcome > recommendations. Past tense for completed work. No first-person, no dot points, no pipe sizes. "Braided supply hose"->"premium PEX core braided supply hoses". "corroded" not "rusty". "Rodded" not "sent" for eel. Cables=4.55m each. Fixture location required for shower/toilet/basin/vanity/bath - flag if missing. Compare draft to agency instructions and flag gaps. Output only valid JSON: {"draft":"text","flags":["flag1"]}`;
+const IP=`You are a plumbing documentation assistant for Viva Plumbing, Brisbane. Convert rough plumber notes into a clean invoice description, review it, and generate smart follow-up questions.
+
+INVOICE RULES:
+- Open with "Called out to investigate..."
+- Structure: findings > works carried out > outcome > recommendations
+- Completed work in past tense. Recommendations in present tense ("It is recommended that...")
+- No first-person, no dot points, no pipe sizes, no fluff
+- "Braided supply hose" -> "premium PEX core braided supply hoses"
+- "corroded" not "rusty". "Rodded" not "sent" for eel. Cables = 4.55m each
+- Fixture location required for shower/toilet/basin/vanity/bath - flag if missing or unclear
+- Compare draft to agency instructions and flag any gaps
+- keeseal stays as written
+
+OUTPUT - respond only with valid JSON:
+{
+  "draft": "full invoice description as clean prose",
+  "flags": ["flag 1", "flag 2"],
+  "queries": [
+    {"q": "question text", "options": ["Option A", "Option B", "Option C"]}
+  ]
+}
+
+Queries should be smart follow-up questions to improve the draft - only include if genuinely needed. Max 4 questions. Examples: fixture location if missing, whether flood/pressure test was done for leak jobs, whether work order items were all addressed. Make options short and tappable.`;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function tn(){const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");}
@@ -265,6 +288,9 @@ function SignIn({ onSignedIn }) {
     const script2 = document.createElement("script");
     script2.src = "https://accounts.google.com/gsi/client";
     document.head.appendChild(script2);
+    const script3 = document.createElement("script");
+    script3.src = "https://apis.google.com/js/api.js";
+    document.head.appendChild(script3);
   }, []);
 
   const handleSignIn = () => {
@@ -282,8 +308,12 @@ function SignIn({ onSignedIn }) {
               headers: { Authorization: `Bearer ${resp.access_token}` }
             }).then(r => r.json());
             const name = EMAIL_TO_NAME[userInfo.email?.toLowerCase()] || "Richie";
-            onSignedIn({ name, email: userInfo.email, token: resp.access_token });
-          } catch(e) { onSignedIn({ name: "Richie", email: "", token: resp.access_token }); }
+            const userData = { name, email: userInfo.email, token: resp.access_token };
+            localStorage.setItem("viva_user", JSON.stringify(userData));
+            onSignedIn(userData);
+          } catch(e) { const userData = { name: "Richie", email: "", token: resp.access_token };
+            localStorage.setItem("viva_user", JSON.stringify(userData));
+            onSignedIn(userData); }
           setLoading(false);
         },
       });
@@ -530,7 +560,7 @@ function ScheduleModal({job,onConfirm,onClose,defaultDate}){
 }
 
 // ── Job Drawer ────────────────────────────────────────────────────────────
-function Drawer({job,allJobs,onClose,onUpdate}){
+function Drawer({job,allJobs,onClose,onUpdate,user}){
   const nj=allJobs.filter(j=>j.assignee===job.assignee&&j.id!==job.id&&["pending","travelling"].includes(j.status)).sort((a,b)=>pt(a.timeStart)-pt(b.timeStart))[0]||null;
   const [notes,setNotes]=useState(job.notes||"");const [story,setStory]=useState(job.story||"");const [edited,setEdited]=useState(false);const [flags,setFlags]=useState([]);const [gen,setGen]=useState(false);const [showComp,setShowComp]=useState(false);const [fa,setFa]=useState(job.furtherAction||"");const [copied,setCopied]=useState(false);const [showDir,setShowDir]=useState(false);const [dirRead,setDirRead]=useState(false);const [showNext,setShowNext]=useState(false);const [ms,setMs]=useState(()=>initM(job.jobType));const [cust,setCust]=useState([]);const [showWO,setShowWO]=useState(false);
   const s=STATUS_COLORS[job.status]||STATUS_COLORS.pending;const c=PC[job.assignee]||PC.Unknown;const jcolor=jc(job.jobType);
@@ -543,9 +573,13 @@ function Drawer({job,allJobs,onClose,onUpdate}){
   const handleNT=()=>{onUpdate(nj.id,{status:"travelling",departedAt:tn(),actionLog:[...(nj.actionLog||[]),{time:tn(),actor:nj.assignee,action:"Departed for job"}]});onClose();};
   const updM=(id,v)=>{if(id==="__c"){setCust(p=>[...p,v]);return;}setMs(p=>({...p,[id]:v}));};
   const genStory=async()=>{if(!notes.trim())return;setGen(true);setFlags([]);const mt=mToTxt(job.jobType,ms);const ct=cust.length?"\nOther: "+cust.join(", "):"";
+    // Build query context if answers exist
+    const qContext = Object.keys(queryAnswers).length > 0
+      ? "\n\nPlumber clarifications:\n" + Object.entries(queryAnswers).map(([q,a])=>`${q}: ${a}`).join("\n")
+      : "";
     try{const r=await fetch("/api/generate",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,system:IP,messages:[{role:"user",content:`Job: ${job.jobType}\nAddress: ${job.address}\nAgency instructions: ${job.workOrder?.instructions||"None"}\nMaterials:\n${mt}${ct}\nNotes: ${notes}\n\nGenerate JSON.`}]})});
     const d=await r.json();const raw=d.content?.map(b=>b.text||"").join("\n")||"";
-    try{const p=JSON.parse(raw.replace(/```json|```/g,"").trim());setStory(p.draft||raw);setFlags(p.flags||[]);}catch{setStory(raw);}setEdited(false);}catch{setStory("Failed — try again.");}setGen(false);};
+    try{const p=JSON.parse(raw.replace(/```json|```/g,"").trim());setStory(p.draft||raw);setFlags(p.flags||[]);setQueries(p.queries||[]);}catch{setStory(raw);}setEdited(false);}catch{setStory("Failed — try again.");}setGen(false);};
   const ti=[];
   if(job.departedAt)ti.push({l:"Departed",v:job.departedAt});
   if(job.arrivedAt)ti.push({l:"Arrived",v:job.arrivedAt,sub:job.departedAt?td(job.departedAt,job.arrivedAt):null});
@@ -657,6 +691,60 @@ function Drawer({job,allJobs,onClose,onUpdate}){
               {flags.map((f,i)=><div key={i} style={{fontSize:12,color:"#b06000",lineHeight:1.6,marginBottom:i<flags.length-1?6:0,display:"flex",gap:8}}><span style={{color:"#f9ab00",flexShrink:0}}>—</span><span>{f}</span></div>)}
             </div>}
           </div>}
+          {/* Query follow-up section */}
+          {queries.length>0&&story&&<div style={{marginBottom:14}}>
+            <div style={{background:"#e8f0fe",border:"1px solid #c5d8fb",borderRadius:8,padding:"14px"}}>
+              <div style={{fontSize:11,fontWeight:700,color:"#1a73e8",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:10}}>
+                💬 Quick Questions — Answer to improve the draft
+              </div>
+              {queries.map((q,qi)=>(
+                <div key={qi} style={{marginBottom:12}}>
+                  <div style={{fontSize:13,color:"#202124",fontWeight:500,marginBottom:6}}>{q.q}</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+                    {(q.options||[]).map((opt,oi)=>(
+                      <button key={oi} onClick={()=>setQueryAnswers(p=>({...p,[q.q]:opt}))}
+                        style={{background:queryAnswers[q.q]===opt?"#1a73e8":"#f1f3f4",border:"none",color:queryAnswers[q.q]===opt?"#fff":"#5f6368",padding:"6px 14px",borderRadius:20,fontSize:12,fontWeight:500,cursor:"pointer",fontFamily:F}}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+              {Object.keys(queryAnswers).length>0&&(
+                <button onClick={genStory} disabled={gen}
+                  style={{marginTop:4,background:"#1a73e8",border:"none",color:"#fff",padding:"8px 20px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:F}}>
+                  ↺ Regenerate with Answers
+                </button>
+              )}
+            </div>
+          </div>}
+
+          {/* Photo picker */}
+          {showM&&<div style={{marginBottom:14}}>
+            <div style={{fontSize:11,fontWeight:700,color:"#5f6368",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>📷 Job Photos</div>
+            <button onClick={()=>openDrivePicker(user?.token||"", (files)=>{
+                setPhotoLinks(prev=>{
+                  const existing = prev ? prev.split("\n").filter(Boolean) : [];
+                  const newLinks = files.map(f=>f.url);
+                  return [...existing,...newLinks].join("\n");
+                });
+              })}
+              style={{background:"#e8f0fe",border:"1px solid #c5d8fb",color:"#1a73e8",padding:"8px 18px",borderRadius:20,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:F,marginBottom:8,display:"flex",alignItems:"center",gap:6}}>
+              <span>📁</span> Select from Google Drive / Photos
+            </button>
+            {photoLinks&&<div style={{background:"#f8f9fa",border:"1px solid #e8eaed",borderRadius:8,padding:"10px 12px"}}>
+              {photoLinks.split("\n").filter(Boolean).map((link,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:8,marginBottom:i<photoLinks.split("\n").filter(Boolean).length-1?6:0}}>
+                  <span style={{fontSize:11,color:"#9aa0a6",flexShrink:0}}>📎</span>
+                  <a href={link} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:"#1a73e8",textDecoration:"none",flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>Photo {i+1}</a>
+                  <button onClick={()=>setPhotoLinks(prev=>prev.split("\n").filter((l,li)=>li!==i).join("\n"))}
+                    style={{background:"none",border:"none",color:"#ea4335",cursor:"pointer",fontSize:14,padding:"0 4px",flexShrink:0}}>✕</button>
+                </div>
+              ))}
+            </div>}
+            {!photoLinks&&<div style={{fontSize:11,color:"#9aa0a6"}}>No photos attached yet</div>}
+          </div>}
+
           {showComp&&<div style={{marginBottom:14}}>
             <div style={{fontSize:11,fontWeight:700,color:"#5f6368",textTransform:"uppercase",letterSpacing:"0.05em",marginBottom:8}}>Further Action Required?</div>
             <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -693,7 +781,13 @@ function Drawer({job,allJobs,onClose,onUpdate}){
 
 // ── Main App ──────────────────────────────────────────────────────────────
 export default function App(){
-  const [user,setUser]=useState(null);
+  // Restore user from localStorage on mount
+  const [user,setUser]=useState(()=>{
+    try {
+      const saved = localStorage.getItem("viva_user");
+      return saved ? JSON.parse(saved) : null;
+    } catch(e) { return null; }
+  });
   const [viewDate,setViewDate]=useState(new Date());
   const [schedJobs,setSchedJobs]=useState([]);
   const [poolJobs,setPoolJobs]=useState([]);
@@ -705,6 +799,20 @@ export default function App(){
   const [now,setNow]=useState(tn());
   const [lastSync,setLastSync]=useState(null);
   const checked=useRef(new Set());
+
+  // Restore gapi token if user already signed in
+  useEffect(()=>{
+    if(user?.token) {
+      const tryRestoreToken = () => {
+        if(window.gapi?.client) {
+          window.gapi.client.setToken({ access_token: user.token });
+        } else {
+          setTimeout(tryRestoreToken, 500);
+        }
+      };
+      tryRestoreToken();
+    }
+  },[user]);
 
   // Load Google API scripts
   useEffect(()=>{
@@ -789,7 +897,7 @@ export default function App(){
     <div style={{minHeight:"100vh",background:"#f8f9fa",fontFamily:F,color:"#202124"}}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet"/>
       <style>{`::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#f1f3f4}::-webkit-scrollbar-thumb{background:#dadce0;border-radius:3px}@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
-      {sel&&<Drawer job={sel} allJobs={schedJobs} onClose={()=>setSel(null)} onUpdate={updJob}/>}
+      {sel&&<Drawer job={sel} allJobs={schedJobs} onClose={()=>setSel(null)} onUpdate={updJob} user={user}/>}
       {schedModal&&<ScheduleModal job={schedModal} onConfirm={confirmSchedule} onClose={()=>setSchedModal(null)} defaultDate={viewDate}/>}
       {/* Header */}
       <div style={{background:"#fff",borderBottom:"1px solid #e8eaed",padding:"0 24px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:50,boxShadow:"0 1px 3px rgba(0,0,0,0.08)"}}>
@@ -810,6 +918,7 @@ export default function App(){
           <div style={{display:"flex",alignItems:"center",gap:6,background:"#f1f3f4",borderRadius:20,padding:"4px 12px"}}>
             <div style={{width:8,height:8,borderRadius:"50%",background:(PC[user.name]||PC.Unknown).dot}}/>
             <span style={{fontSize:12,color:"#3c4043",fontWeight:500}}>{user.name}</span>
+            <button onClick={()=>{localStorage.removeItem("viva_user");setUser(null);}} style={{background:"none",border:"none",color:"#9aa0a6",fontSize:11,cursor:"pointer",padding:"0 0 0 4px",fontFamily:F}}>✕</button>
           </div>
         </div>
       </div>
