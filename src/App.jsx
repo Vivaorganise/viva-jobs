@@ -343,6 +343,7 @@ function SignIn({ onSignedIn }) {
       const client = window.google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
         scope: SCOPES,
+        prompt: "consent",
         callback: async (resp) => {
           if (resp.error) { setError("Sign in failed. Try again."); setLoading(false); return; }
           window.gapi.client.setToken(resp);
@@ -352,7 +353,7 @@ function SignIn({ onSignedIn }) {
               headers: { Authorization: `Bearer ${resp.access_token}` }
             }).then(r => r.json());
             const name = EMAIL_TO_NAME[userInfo.email?.toLowerCase()] || "Richie";
-            const userData = { name, email: userInfo.email, token: resp.access_token };
+            const userData = { name, email: userInfo.email, token: resp.access_token, expires: Date.now() + (resp.expires_in||3600)*1000 };
             localStorage.setItem("viva_user", JSON.stringify(userData));
             onSignedIn(userData);
           } catch(e) { const userData = { name: "Richie", email: "", token: resp.access_token };
@@ -849,7 +850,15 @@ export default function App(){
   const [user,setUser]=useState(()=>{
     try {
       const saved = localStorage.getItem("viva_user");
-      return saved ? JSON.parse(saved) : null;
+      if (!saved) return null;
+      const parsed = JSON.parse(saved);
+      // Check if token is expired (with 5 min buffer)
+      if (parsed.expires && Date.now() > parsed.expires - 300000) {
+        console.log("Stored token expired, clearing");
+        localStorage.removeItem("viva_user");
+        return null;
+      }
+      return parsed;
     } catch(e) { return null; }
   });
   const [viewDate,setViewDate]=useState(new Date());
