@@ -543,7 +543,7 @@ function Drawer({job,allJobs,onClose,onUpdate}){
   const handleNT=()=>{onUpdate(nj.id,{status:"travelling",departedAt:tn(),actionLog:[...(nj.actionLog||[]),{time:tn(),actor:nj.assignee,action:"Departed for job"}]});onClose();};
   const updM=(id,v)=>{if(id==="__c"){setCust(p=>[...p,v]);return;}setMs(p=>({...p,[id]:v}));};
   const genStory=async()=>{if(!notes.trim())return;setGen(true);setFlags([]);const mt=mToTxt(job.jobType,ms);const ct=cust.length?"\nOther: "+cust.join(", "):"";
-    try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,system:IP,messages:[{role:"user",content:`Job: ${job.jobType}\nAddress: ${job.address}\nAgency instructions: ${job.workOrder?.instructions||"None"}\nMaterials:\n${mt}${ct}\nNotes: ${notes}\n\nGenerate JSON.`}]})});
+    const apiKey=process.env.REACT_APP_ANTHROPIC_KEY||"";if(!apiKey){setStory("API key not configured — contact admin.");setGen(false);return;}try{const r=await fetch("https://api.anthropic.com/v1/messages",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":apiKey,"anthropic-version":"2023-06-01","anthropic-dangerous-direct-browser-ipc":"true"},body:JSON.stringify({model:"claude-sonnet-4-20250514",max_tokens:1200,system:IP,messages:[{role:"user",content:`Job: ${job.jobType}\nAddress: ${job.address}\nAgency instructions: ${job.workOrder?.instructions||"None"}\nMaterials:\n${mt}${ct}\nNotes: ${notes}\n\nGenerate JSON.`}]})});
     const d=await r.json();const raw=d.content?.map(b=>b.text||"").join("\n")||"";
     try{const p=JSON.parse(raw.replace(/```json|```/g,"").trim());setStory(p.draft||raw);setFlags(p.flags||[]);}catch{setStory(raw);}setEdited(false);}catch{setStory("Failed — try again.");}setGen(false);};
   const ti=[];
@@ -846,11 +846,4 @@ export default function App(){
           <div style={{fontSize:12}}>Jobs from your Google Calendar will appear here</div>
         </div>}
         {(schedJobs.length>0||view!=="board")&&<>
-          {view==="board"&&<Board jobs={schedJobs} onSelect={setSel}/>}
-          {view==="myjobs"&&<MyJobs jobs={schedJobs} plumber={myP} onSelect={setSel}/>}
-          {view==="pool"&&<JobPool poolJobs={poolJobs} onSchedule={setSchedModal}/>}
-        </>}
-      </div>
-    </div>
-  );
-}
+          {view==="board"&&<Board jobs={schedJobs}
